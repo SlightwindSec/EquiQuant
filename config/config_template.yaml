@@ -1,0 +1,129 @@
+base_model_path: "/mnt/nfs/weight/Qwen3-32B"
+
+# -----------------------------------------------
+# 评估 (AisBench)
+# -----------------------------------------------
+evaluation:
+  tolerance_ratio: 0.01 # 默认 ±1%
+  aisbench:
+    binary: "ais_bench"
+    mode: "all"
+    timeout: 7200
+    request_rate: 1
+    retry: 2
+    batch_size: 1
+    max_out_len: 512
+    trust_remote_code: false
+    pred_postprocessor: "extract_non_reasoning_content"
+    generation_kwargs:
+      temperature: 0.5
+      top_k: 10
+      top_p: 0.95
+      seed: null
+      repetition_penalty: 1.03
+    model_config:
+      base_name: "vllm_api_general_chat"
+      subdir: "vllm_api"
+      abbr: "vllm-api-general-chat"
+      attr: "service"
+    log_dir: "/path/to/workspace/aisbench_logs"
+    default_metric_keys:
+      - "final_accuracy"
+      - "accuracy"
+      - "score"
+  datasets:
+    aime2024:
+      config_name: "aime2024_gen_0_shot_chat_prompt"
+      mode: "all"
+      target_accuracy: 0.900
+      tolerance_ratio: 0.067
+      metric_keys:
+        - "aime2024_accuracy"
+    ceval:
+      config_name: "ceval_gen_5_shot_str"
+      mode: "all"
+      target_accuracy: 0.500
+
+# -----------------------------------------------
+# VLLM-Ascend Server
+# -----------------------------------------------
+vllm_server:
+  entrypoint: "vllm.entrypoints.openai.api_server"
+  env_vars:
+    HCCL_BUFFSIZE: 1024
+    VLLM_VERSION: "0.11.0"
+    ASCEND_RT_VISIBLE_DEVICES: "0,1"
+    # HCCL_OP_EXPANSION_MODE: "AIV"
+
+  host: "localhost"
+  port: 1234
+  health_check_endpoint: "/v1/models" # vLLM OpenAI-compatible health check
+  startup_timeout: 600 # 10 分钟等待模型加载
+
+  # -----------------------------------------------
+  # vLLM 命令行参数
+  # -----------------------------------------------
+  args:
+    served-model-name: "w4a4"
+    trust-remote-code: true
+    # enforce-eager: true
+    tensor-parallel-size: 2
+    data-parallel-size: 1
+    quantization: "ascend"
+    enable-prefix-caching: false
+    max-model-len: 8192
+    max-num-batched-tokens: 8192
+    gpu-memory-utilization: 0.9
+    # 嵌套字典将自动转换为 JSON 字符串
+    additional_config:
+      ascend_scheduler_config:
+        enabled: true
+      enable_weight_nz_layout: true
+
+# -----------------------------------------------
+# 核心调优策略
+# -----------------------------------------------
+strategy:
+  layer_pattern: "model.layers.{i}.mlp.down_proj"
+  initial_fallback_layers:
+    - 'lm_head'
+  method: "greedy_fallback"
+
+# -----------------------------------------------
+# 量化器 (Modelslim) 配置
+# -----------------------------------------------
+quantization:
+  visible_devices: "0,1,2,3"
+  model_type: "Qwen3-32B"
+  device: "npu"
+  trust_remote_code: true
+
+  # Modelslim YAML 配置模板
+  template_config:
+    apiversion: modelslim_v0
+    metadata:
+      config_id: qwen3-32b-dense-w8a8
+      score: 90
+      verified_model_types:
+        - Qwen3-32B
+      label: { w_bit: 8, a_bit: 8, is_sparse: false, kv_cache: false }
+    spec:
+      anti_cfg: { anti_method: m4 }
+      calib_cfg:
+        w_bit: 8
+        a_bit: 8
+        mm_tensor: false
+        pdmix: false
+      calib_dataset: "mix_calib.jsonl" 
+      calib_save_params: { part_file_size: 4 }
+
+# -----------------------------------------------
+# 工作区 (运行时文件)
+# -----------------------------------------------
+workspace:
+  base_dir: "/path/to/workspace"
+  current_run_dir: "current_run"
+  history_dir: "history"
+  best_weights_dir: "best_weights"
+  quant_config_name: "generated_modelslim_config.yaml"
+  quant_weights_dir: "quantized_weights"
