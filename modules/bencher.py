@@ -143,6 +143,21 @@ class AisBencher:
         if not self.model_config_path:
             raise RuntimeError("Model config path has not been prepared.")
 
+        # 根据是否使用 Chat 模版，选择不同的 AISBench Model 类型
+        use_chat_template = bool(self.model_cfg_meta.get('use_chat_template', True))
+        model_type = self.model_cfg_meta.get('type')
+        if not model_type:
+            model_type = 'VLLMCustomAPIChat' if use_chat_template else 'VLLMCustomAPI'
+
+        if model_type == 'VLLMCustomAPIChat':
+            model_import = "from ais_bench.benchmark.models import VLLMCustomAPIChat\n"
+        elif model_type == 'VLLMCustomAPI':
+            model_import = "from ais_bench.benchmark.models import VLLMCustomAPI\n"
+        else:
+            # 兜底：未知类型时仍然回退到 Chat 版本，避免直接崩溃
+            model_import = "from ais_bench.benchmark.models import VLLMCustomAPIChat\n"
+            model_type = 'VLLMCustomAPIChat'
+
         postproc = self.ais_config.get('pred_postprocessor', 'extract_non_reasoning_content')
         if postproc:
             import_line = f"from ais_bench.benchmark.utils.model_postprocessors import {postproc}\n"
@@ -177,12 +192,12 @@ class AisBencher:
             pass
 
         content = (
-            "from ais_bench.benchmark.models import VLLMCustomAPIChat\n"
+            f"{model_import}"
             f"{import_line}"
             "models = [\n"
             "    dict(\n"
             f"        attr={repr(attr)},\n"
-            "        type=VLLMCustomAPIChat,\n"
+            f"        type={model_type},\n"
             f"        abbr={repr(abbr)},\n"
             f"        path={repr(self.quantized_model_path)},\n"
             f"        model={repr(self.served_model_name)},\n"

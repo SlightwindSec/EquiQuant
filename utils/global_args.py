@@ -75,24 +75,38 @@ class GlobalConfig:
         if isinstance(cfg.get('aisbench_generation_kwargs'), dict):
             ais_generation.update(cfg['aisbench_generation_kwargs'])
 
+        # 是否使用 Chat 模版，决定 AISBench 使用的模型类型与配置前缀
+        use_chat_template = bool(cfg.get('aisbench_use_chat_template', True))
+        if use_chat_template:
+            model_base_name = 'vllm_api_general_chat'
+            model_abbr = 'vllm-api-general-chat'
+            model_type = 'VLLMCustomAPIChat'
+        else:
+            model_base_name = 'vllm_api_general'
+            model_abbr = 'vllm-api-general'
+            model_type = 'VLLMCustomAPI'
+
         evaluation['aisbench'] = {
             'binary': 'ais_bench',
             'mode': 'all',
             'timeout': cfg.get('aisbench_timeout', 7200),
             'request_rate': cfg.get('aisbench_request_rate', 1),
             'retry': cfg.get('aisbench_retry', 2),
-            'batch_size': cfg.get('aisbench_batch_size', 1),
+            'batch_size': cfg.get('aisbench_batch_size', 32),
             'max_out_len': cfg.get('aisbench_max_out_len', 512),
             'trust_remote_code': False,
             'pred_postprocessor': cfg.get('aisbench_pred_postprocessor', 'extract_non_reasoning_content'),
             'generation_kwargs': ais_generation,
             'model_config': {
-                'base_name': cfg.get('aisbench_model_base_name', 'vllm_api_general_chat'),
-                'subdir': cfg.get('aisbench_model_subdir', 'vllm_api'),
-                'abbr': cfg.get('aisbench_model_abbr', 'vllm-api-general-chat'),
-                'attr': cfg.get('aisbench_model_attr', 'service'),
+                # 这几个字段不再暴露给用户，完全根据是否使用 Chat 模版自动推导
+                'base_name': model_base_name,
+                'abbr': model_abbr,
+                'type': model_type,
+                'attr': 'service',
+                'subdir': 'vllm_api',
                 'name_suffix': cfg.get('aisbench_model_name_suffix', 'auto'),
                 'directory': cfg.get('aisbench_model_directory'),
+                'use_chat_template': use_chat_template,
             },
             'log_dir': cfg.get('aisbench_log_dir', 'workspace/aisbench_logs'),
             'default_metric_keys': cfg.get(
