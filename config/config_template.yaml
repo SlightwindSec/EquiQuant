@@ -103,8 +103,8 @@ evaluation_datasets:
 aisbench_timeout: 7200
 aisbench_request_rate: 1
 aisbench_retry: 2
-aisbench_batch_size: 1
-aisbench_max_out_len: 512
+aisbench_batch_size: 32
+aisbench_max_out_len: 2
 aisbench_pred_postprocessor: "extract_non_reasoning_content"
 aisbench_generation_kwargs:
   temperature: 0.5
@@ -162,7 +162,7 @@ quantization_template_config:
       - Qwen3-32B
     label: { w_bit: 8, a_bit: 8, is_sparse: false, kv_cache: false }
   spec:
-    anti_cfg: { anti_method: m4 }
+    # anti_cfg: { anti_method: m4 }
     calib_cfg:
       w_bit: 8
       a_bit: 8
