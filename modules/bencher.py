@@ -85,7 +85,7 @@ class AisBencher:
                     continue
 
                 try:
-                    cmd = self._build_command(dataset_cfg)
+                    cmd = self._build_command(alias, dataset_cfg)
                 except Exception as exc:
                     logger.error(f"Invalid dataset config for {alias}: {exc}")
                     results[alias] = 0.0
@@ -224,7 +224,7 @@ class AisBencher:
             except Exception as exc:
                 logger.warning(f"Failed to remove AISBench model config {self.model_config_path}: {exc}")
 
-    def _build_command(self, dataset_cfg: Dict) -> str:
+    def _build_command(self, dataset_alias: str, dataset_cfg: Dict) -> str:
         dataset_cli_name = dataset_cfg.get('config_name')
         if not dataset_cli_name:
             raise KeyError("Dataset config must provide 'config_name' for ais_bench.")
@@ -247,6 +247,16 @@ class AisBencher:
         cmd = f"{self.binary} --models {self.model_config_name} --datasets {dataset_cli_name} --mode {mode}"
         if extra_str:
             cmd = f"{cmd} {extra_str}"
+
+        # 特殊数据集需要合并多个子数据集时，追加 --merge-ds
+        # 这里同时对数据集别名和 config_name 做判断，以兼容不同配置风格。
+        alias_lower = (dataset_alias or "").lower()
+        cli_name_lower = str(dataset_cli_name).lower()
+        if any(key in alias_lower for key in ("ceval", "mmlu")) or any(
+            key in cli_name_lower for key in ("ceval", "mmlu")
+        ):
+            cmd = f"{cmd} --merge-ds"
+
         return cmd
 
     def _write_log(self, dataset_alias: str, cmd: str, stdout: str, stderr: str) -> str:
