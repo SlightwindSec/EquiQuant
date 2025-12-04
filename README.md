@@ -18,11 +18,14 @@ python main.py
 
 ## 关键配置
 
-- `evaluation.tolerance_ratio`：全局默认容忍度（例如 `0.01` 即 ±1%）。
-- `evaluation.aisbench`：定义 `ais_bench` 二进制、模型配置模板、请求速率、生成参数、日志目录等。
-- `evaluation.datasets`：为每个评测数据集提供
-  - `config_name`：`ais_bench --datasets` 对应的 python 配置名。
-  - `target_accuracy` 和可选的 `tolerance_ratio`（覆盖全局值）。
-  - `metric_keys` / `result_regex`（可选）用于解析日志得分。
+`config/config.yaml` 采用扁平化键名，约定俗成地通过前缀区分不同模块，常见字段包括：
 
-更多字段示例见 `config/config.yaml`。
+- `base_model_path`：原始模型路径。
+- `workspace_*`：运行中产生的量化配置、权重、日志目录等。
+- `strategy_layer_pattern` / `strategy_initial_fallback_layers`：回退策略。
+- `evaluation_tolerance_ratio` 与 `evaluation_datasets`：分别定义全局容忍度以及每个数据集的 `config_name / target_accuracy / tolerance_ratio / metric_keys`。
+- `aisbench_*`：AISBench 运行参数（请求速率、生成参数、日志目录等）。`disable_qwen_thinking` 会自动向 `generation_kwargs` 注入 `chat_template_kwargs={"enable_thinking": False}`。
+- `vllm_port`、`vllm_env_vars`、`vllm_args`：控制 vLLM-Ascend 端口及附加参数（`entrypoint/host/health check/startup timeout/served-model-name` 等已内置，用户无需配置）。
+- `quantization_*`：ModelSlim 运行所需的设备、模板配置等。
+
+完整示例见 `config/config_template.yaml`。*** End Patch

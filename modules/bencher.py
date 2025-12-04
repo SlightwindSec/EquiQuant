@@ -1,3 +1,4 @@
+import copy
 import os
 import re
 import time
@@ -31,6 +32,7 @@ class AisBencher:
 
         self.ais_config = self.eval_config.get('aisbench', {})
         self.datasets = self.eval_config.get('datasets', {})
+        self.disable_thinking = bool(self.eval_config.get('disable_qwen_thinking', False))
 
         self.binary = self.ais_config.get('binary', 'ais_bench')
         self.global_mode = self.ais_config.get('mode', 'all')
@@ -155,13 +157,17 @@ class AisBencher:
         trust_remote_code = self.ais_config.get('trust_remote_code', False)
         abbr = self.model_cfg_meta.get('abbr', 'vllm-api-general-chat')
         attr = self.model_cfg_meta.get('attr', 'service')
-        generation_kwargs = self.ais_config.get('generation_kwargs', {
+        generation_defaults = {
             "temperature": 0.5,
             "top_k": 10,
             "top_p": 0.95,
             "seed": None,
             "repetition_penalty": 1.03,
-        })
+        }
+        generation_kwargs = copy.deepcopy(self.ais_config.get('generation_kwargs', generation_defaults))
+        if self.disable_thinking:
+            chat_kwargs = generation_kwargs.setdefault("chat_template_kwargs", {})
+            chat_kwargs["enable_thinking"] = False
 
         request_rate_value = request_rate if request_rate is not None else self.default_request_rate
         host_port_value = self.host_port
