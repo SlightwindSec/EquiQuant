@@ -26,12 +26,16 @@ evaluation:
       subdir: "vllm_api"
       abbr: "vllm-api-general-chat"
       attr: "service"
-    log_dir: "/path/to/workspace/aisbench_logs"
+    log_dir: "workspace/aisbench_logs"
     default_metric_keys:
       - "final_accuracy"
       - "accuracy"
       - "score"
   datasets:
+    ceval:
+      config_name: "ceval_gen_5_shot_str"
+      mode: "all"
+      target_accuracy: 0.500
     aime2024:
       config_name: "aime2024_gen_0_shot_chat_prompt"
       mode: "all"
@@ -39,10 +43,6 @@ evaluation:
       tolerance_ratio: 0.067
       metric_keys:
         - "aime2024_accuracy"
-    ceval:
-      config_name: "ceval_gen_5_shot_str"
-      mode: "all"
-      target_accuracy: 0.500
 
 # -----------------------------------------------
 # VLLM-Ascend Server
@@ -64,7 +64,7 @@ vllm_server:
   # vLLM 命令行参数
   # -----------------------------------------------
   args:
-    served-model-name: "w4a4"
+    served-model-name: "qwen3"
     trust-remote-code: true
     # enforce-eager: true
     tensor-parallel-size: 2
@@ -121,7 +121,7 @@ quantization:
 # 工作区 (运行时文件)
 # -----------------------------------------------
 workspace:
-  base_dir: "/path/to/workspace"
+  base_dir: "workspace"
   current_run_dir: "current_run"
   history_dir: "history"
   best_weights_dir: "best_weights"

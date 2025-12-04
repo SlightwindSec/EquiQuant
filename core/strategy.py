@@ -98,7 +98,7 @@ class TuningStrategy:
         """
         if isinstance(target_cfg, dict):
             target = target_cfg.get('target_accuracy') or target_cfg.get('target')
-            tolerance = target_cfg.get('tolerance_ratio') or target_cfg.get('tolerance', 0.0)
+            tolerance = target_cfg.get('tolerance_ratio') or target_cfg.get('tolerance', 0.01)
         else:
             target = target_cfg
             tolerance = 0.0
