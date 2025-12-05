@@ -84,19 +84,19 @@ strategy_initial_fallback_layers:
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
-evaluation_tolerance_ratio: 0.01
+evaluation_tolerance_ratio: 1
 disable_qwen_thinking: true
 
 evaluation_datasets:
   ceval:
     config_name: "ceval_gen_5_shot_str"
     mode: "all"
-    target_accuracy: 0.500
+    target_accuracy: 50.0
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
-    target_accuracy: 0.900
-    tolerance_ratio: 0.067
+    target_accuracy: 90.0
+    tolerance_ratio: 6.67
     metric_keys:
       - "aime2024_accuracy"
 
@@ -117,7 +117,7 @@ aisbench_default_metric_keys:
   - "final_accuracy"
   - "accuracy"
   - "score"
-aisbench_use_chat_template: true  # true: 使用 Chat 模版 (VLLMCustomAPIChat, vllm_api_general_chat*), false: 使用普通模版 (VLLMCustomAPI, vllm_api_general*)
+aisbench_use_chat_template: false  # true: 使用 Chat 模版 (VLLMCustomAPIChat, vllm_api_general_chat*), false: 使用普通模版 (VLLMCustomAPI, vllm_api_general*)
 aisbench_cleanup_model_config: true
 aisbench_extra_args: null
 
