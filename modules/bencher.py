@@ -2,9 +2,12 @@ import copy
 import os
 import re
 import time
+import json
+import csv
+import shutil
 import importlib.util
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
 
 from utils.shell import ShellRunner
 from utils.logger import logger
@@ -99,9 +102,19 @@ class AisBencher:
                     results[alias] = 0.0
                     continue
 
-                accuracy = self._parse_accuracy(stdout + "\n" + stderr, alias, dataset_cfg)
+                # 尝试从输出文件中解析结果
+                accuracy, result_data = self._parse_results_from_files(stdout + "\n" + stderr, alias, dataset_cfg)
+                if accuracy is None:
+                    # 如果文件解析失败，回退到日志解析
+                    accuracy = self._parse_accuracy(stdout + "\n" + stderr, alias, dataset_cfg)
+                    logger.warning(f"Failed to parse results from files for {alias}, using log parsing fallback.")
+                
                 logger.info(f"AISBench result for {alias}: {accuracy}")
                 results[alias] = accuracy
+                
+                # 保存解析的结果数据
+                if result_data:
+                    self._save_result_data(alias, result_data)
         finally:
             self._cleanup_model_config()
 
@@ -270,7 +283,353 @@ class AisBencher:
         logger.info(f"AISBench logs for {dataset_alias} saved to: {log_path}")
         return log_path
 
+    def _extract_output_path(self, logs: str) -> Optional[str]:
+        """
+        从日志中提取 AISBench 的输出路径。
+        查找类似 "Current exp folder: outputs/default/20250628_151326" 的日志。
+        
+        Args:
+            logs: 标准输出和标准错误的合并内容
+            
+        Returns:
+            输出路径（相对路径或绝对路径），如果未找到则返回 None
+        """
+        # 匹配 "Current exp folder: outputs/default/20250628_151326" 这样的模式
+        pattern = r"Current exp folder:\s*([^\s\n]+)"
+        match = re.search(pattern, logs, re.IGNORECASE)
+        if match:
+            output_path = match.group(1).strip()
+            # 如果是相对路径，需要基于当前工作目录解析
+            if not os.path.isabs(output_path):
+                # 尝试从命令执行的工作目录查找
+                cwd = os.getcwd()
+                abs_path = os.path.join(cwd, output_path)
+                if os.path.exists(abs_path):
+                    return abs_path
+                return output_path
+            return output_path
+        return None
+
+    def _parse_results_from_files(self, logs: str, dataset_alias: str, dataset_cfg: Dict) -> Tuple[Optional[float], Optional[Dict]]:
+        """
+        从 AISBench 的输出文件中解析结果。
+        
+        Args:
+            logs: 标准输出和标准错误的合并内容
+            dataset_alias: 数据集别名
+            dataset_cfg: 数据集配置
+            
+        Returns:
+            (accuracy, result_data) 元组，如果解析失败则返回 (None, None)
+            result_data 包含 summary, results, predictions 等信息
+        """
+        output_path = self._extract_output_path(logs)
+        if not output_path:
+            logger.debug(f"Could not extract output path from logs for {dataset_alias}")
+            return None, None
+        
+        if not os.path.exists(output_path):
+            logger.warning(f"AISBench output path does not exist: {output_path}")
+            return None, None
+        
+        result_data = {
+            'output_path': output_path,
+            'summary': None,
+            'results': None,
+            'predictions': None
+        }
+        
+        # 解析 summary CSV 文件
+        summary_data = self._parse_summary_csv(output_path, dataset_alias, dataset_cfg)
+        if summary_data:
+            result_data['summary'] = summary_data
+            accuracy = summary_data.get('accuracy')
+            if accuracy is not None:
+                # 同时解析 results JSON 和 predictions JSON
+                result_data['results'] = self._parse_results_json(output_path, dataset_alias, dataset_cfg)
+                result_data['predictions'] = self._parse_predictions_json(output_path, dataset_alias, dataset_cfg)
+                return accuracy, result_data
+        
+        return None, None
+
+    def _parse_summary_csv(self, output_path: str, dataset_alias: str, dataset_cfg: Dict) -> Optional[Dict]:
+        """
+        解析 summary CSV 文件。
+        
+        Args:
+            output_path: AISBench 输出目录路径
+            dataset_alias: 数据集别名
+            dataset_cfg: 数据集配置
+            
+        Returns:
+            包含解析结果的字典，如果解析失败则返回 None
+        """
+        summary_dir = os.path.join(output_path, 'summary')
+        if not os.path.exists(summary_dir):
+            logger.warning(f"Summary directory not found: {summary_dir}")
+            return None
+        
+        # 查找 summary CSV 文件（格式：summary_YYYYMMDD_HHMMSS.csv）
+        csv_files = list(Path(summary_dir).glob('summary_*.csv'))
+        if not csv_files:
+            logger.warning(f"No summary CSV file found in {summary_dir}")
+            return None
+        
+        # 使用最新的 CSV 文件
+        csv_file = sorted(csv_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
+        
+        try:
+            with open(csv_file, 'r', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+                
+                if not rows:
+                    logger.warning(f"Summary CSV file is empty: {csv_file}")
+                    return None
+                
+                # 查找匹配的数据集行
+                # CSV 格式: dataset,version,metric,mode,vllm-api-general
+                # 示例: cevaldataset,-,accuracy,gen,78.97
+                dataset_name = dataset_cfg.get('config_name', dataset_alias)
+                metric_keys = dataset_cfg.get('metric_keys', [])
+                
+                # 尝试匹配数据集名称（可能不完全匹配，需要模糊匹配）
+                matched_row = None
+                for row in rows:
+                    row_dataset = row.get('dataset', '').lower()
+                    # 检查数据集名称是否匹配（支持部分匹配）
+                    if (dataset_name.lower() in row_dataset or 
+                        row_dataset in dataset_name.lower() or
+                        dataset_alias.lower() in row_dataset):
+                        matched_row = row
+                        break
+                
+                # 如果没找到精确匹配，使用第一行（通常只有一个数据集）
+                if not matched_row and rows:
+                    matched_row = rows[0]
+                
+                if not matched_row:
+                    logger.warning(f"No matching dataset found in summary CSV for {dataset_alias}")
+                    return None
+                
+                # 提取精度值
+                # CSV 的最后一列通常是精度值（列名可能是模型缩写，如 vllm-api-general）
+                accuracy = None
+                for key, value in matched_row.items():
+                    if key.lower() in ('dataset', 'version', 'metric', 'mode'):
+                        continue
+                    try:
+                        accuracy = float(value)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+                
+                if accuracy is None:
+                    logger.warning(f"Could not extract accuracy from summary CSV row: {matched_row}")
+                    return None
+                
+                return {
+                    'csv_file': str(csv_file),
+                    'dataset': matched_row.get('dataset', ''),
+                    'metric': matched_row.get('metric', ''),
+                    'mode': matched_row.get('mode', ''),
+                    'accuracy': accuracy,
+                    'raw_row': matched_row
+                }
+                
+        except Exception as exc:
+            logger.error(f"Failed to parse summary CSV file {csv_file}: {exc}")
+            return None
+
+    def _parse_results_json(self, output_path: str, dataset_alias: str, dataset_cfg: Dict) -> Optional[Dict]:
+        """
+        解析 results JSON 文件。
+        
+        Args:
+            output_path: AISBench 输出目录路径
+            dataset_alias: 数据集别名
+            dataset_cfg: 数据集配置
+            
+        Returns:
+            包含解析结果的字典，如果解析失败则返回 None
+        """
+        results_dir = os.path.join(output_path, 'results')
+        if not os.path.exists(results_dir):
+            logger.debug(f"Results directory not found: {results_dir}")
+            return None
+        
+        # 查找 results JSON 文件
+        # 路径格式: results/vllm-api-general-chat/dataset_name.json
+        # 需要遍历子目录查找
+        json_files = []
+        for root, dirs, files in os.walk(results_dir):
+            for file in files:
+                if file.endswith('.json'):
+                    json_files.append(os.path.join(root, file))
+        
+        if not json_files:
+            logger.debug(f"No results JSON file found in {results_dir}")
+            return None
+        
+        # 尝试匹配数据集名称
+        dataset_name = dataset_cfg.get('config_name', dataset_alias)
+        matched_file = None
+        
+        for json_file in json_files:
+            file_name = os.path.basename(json_file).replace('.json', '').lower()
+            if (dataset_name.lower() in file_name or 
+                file_name in dataset_name.lower() or
+                dataset_alias.lower() in file_name):
+                matched_file = json_file
+                break
+        
+        # 如果没找到匹配，使用第一个 JSON 文件
+        if not matched_file and json_files:
+            matched_file = json_files[0]
+        
+        if not matched_file:
+            return None
+        
+        try:
+            with open(matched_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return {
+                    'json_file': matched_file,
+                    'data': data
+                }
+        except Exception as exc:
+            logger.warning(f"Failed to parse results JSON file {matched_file}: {exc}")
+            return None
+
+    def _parse_predictions_json(self, output_path: str, dataset_alias: str, dataset_cfg: Dict) -> Optional[Dict]:
+        """
+        解析 predictions JSON 文件（用于将来分析哪些题目做错）。
+        
+        Args:
+            output_path: AISBench 输出目录路径
+            dataset_alias: 数据集别名
+            dataset_cfg: 数据集配置
+            
+        Returns:
+            包含解析结果的字典，如果解析失败则返回 None
+        """
+        predictions_dir = os.path.join(output_path, 'predictions')
+        if not os.path.exists(predictions_dir):
+            logger.debug(f"Predictions directory not found: {predictions_dir}")
+            return None
+        
+        # 查找 predictions JSON 文件
+        json_files = []
+        for root, dirs, files in os.walk(predictions_dir):
+            for file in files:
+                if file.endswith('.json'):
+                    json_files.append(os.path.join(root, file))
+        
+        if not json_files:
+            logger.debug(f"No predictions JSON file found in {predictions_dir}")
+            return None
+        
+        # 尝试匹配数据集名称
+        dataset_name = dataset_cfg.get('config_name', dataset_alias)
+        matched_file = None
+        
+        for json_file in json_files:
+            file_name = os.path.basename(json_file).replace('.json', '').lower()
+            if (dataset_name.lower() in file_name or 
+                file_name in dataset_name.lower() or
+                dataset_alias.lower() in file_name):
+                matched_file = json_file
+                break
+        
+        # 如果没找到匹配，使用第一个 JSON 文件
+        if not matched_file and json_files:
+            matched_file = json_files[0]
+        
+        if not matched_file:
+            return None
+        
+        try:
+            with open(matched_file, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return {
+                    'json_file': matched_file,
+                    'data': data
+                }
+        except Exception as exc:
+            logger.warning(f"Failed to parse predictions JSON file {matched_file}: {exc}")
+            return None
+
+    def _save_result_data(self, dataset_alias: str, result_data: Dict):
+        """
+        保存解析的结果数据到当前运行目录。
+        
+        Args:
+            dataset_alias: 数据集别名
+            result_data: 包含 summary, results, predictions 等信息的字典
+        """
+        save_dir = os.path.join(self.current_run_dir, "aisbench_results", f"trial{self.run_id:03d}")
+        os.makedirs(save_dir, exist_ok=True)
+        
+        dataset_save_dir = os.path.join(save_dir, dataset_alias)
+        os.makedirs(dataset_save_dir, exist_ok=True)
+        
+        # 保存 summary 信息
+        if result_data.get('summary'):
+            summary_file = os.path.join(dataset_save_dir, 'summary.json')
+            try:
+                with open(summary_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data['summary'], f, indent=2, ensure_ascii=False)
+                logger.debug(f"Saved summary data to {summary_file}")
+            except Exception as exc:
+                logger.warning(f"Failed to save summary data: {exc}")
+        
+        # 保存 results JSON（原始分数）
+        if result_data.get('results'):
+            results_file = os.path.join(dataset_save_dir, 'results.json')
+            try:
+                with open(results_file, 'w', encoding='utf-8') as f:
+                    json.dump(result_data['results'], f, indent=2, ensure_ascii=False)
+                logger.debug(f"Saved results data to {results_file}")
+            except Exception as exc:
+                logger.warning(f"Failed to save results data: {exc}")
+        
+        # 保存 predictions JSON（推理结果，将来用于分析错题）
+        if result_data.get('predictions'):
+            predictions_file = os.path.join(dataset_save_dir, 'predictions.json')
+            try:
+                # predictions 可能很大，直接复制原文件而不是重新序列化
+                source_file = result_data['predictions'].get('json_file')
+                if source_file and os.path.exists(source_file):
+                    shutil.copy2(source_file, predictions_file)
+                    logger.debug(f"Saved predictions data to {predictions_file}")
+                else:
+                    # 如果源文件不存在，则序列化数据
+                    with open(predictions_file, 'w', encoding='utf-8') as f:
+                        json.dump(result_data['predictions'], f, indent=2, ensure_ascii=False)
+                    logger.debug(f"Saved predictions data to {predictions_file}")
+            except Exception as exc:
+                logger.warning(f"Failed to save predictions data: {exc}")
+        
+        # 保存元数据
+        metadata = {
+            'dataset_alias': dataset_alias,
+            'output_path': result_data.get('output_path'),
+            'run_id': self.run_id,
+            'has_summary': result_data.get('summary') is not None,
+            'has_results': result_data.get('results') is not None,
+            'has_predictions': result_data.get('predictions') is not None
+        }
+        metadata_file = os.path.join(dataset_save_dir, 'metadata.json')
+        try:
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            logger.warning(f"Failed to save metadata: {exc}")
+
     def _parse_accuracy(self, logs: str, dataset_alias: str, dataset_cfg: Dict) -> float:
+        """
+        从日志中解析精度值（作为文件解析失败时的回退方案）。
+        """
         patterns = []
 
         custom_regex = dataset_cfg.get('result_regex')
