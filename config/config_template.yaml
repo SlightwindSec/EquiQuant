@@ -1,4 +1,4 @@
-base_model_path: "/mnt/nfs/weight/Qwen3-32B"
+base_model_path: "/mnt/share/weight/Qwen3-32B"
 
 # -----------------------------------------------
 # 工作区 (运行时文件)
@@ -117,7 +117,7 @@ aisbench_default_metric_keys:
   - "final_accuracy"
   - "accuracy"
   - "score"
-aisbench_use_chat_template: false  # true: 使用 Chat 模版 (VLLMCustomAPIChat, vllm_api_general_chat*), false: 使用普通模版 (VLLMCustomAPI, vllm_api_general*)
+aisbench_use_chat_template: false
 aisbench_cleanup_model_config: true
 aisbench_extra_args: null
 
