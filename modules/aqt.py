@@ -74,6 +74,7 @@ class AutomaticQuantizationTool:
         scripts_dir_q = shlex.quote(self.scripts_dir)
         cmd = (
             f"cd {scripts_dir_q} && "
+            f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
             f"export OMP_NUM_THREADS={self.omp_num_threads}; "
             f"python {project_dir_q}/quantize_modelslim.py "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
@@ -103,7 +104,6 @@ class AutomaticQuantizationTool:
         scripts_dir_q = shlex.quote(self.scripts_dir)
         cmd = (
             f"cd {scripts_dir_q} && "
-            f"export ASCEND_RT_VISIBLE_DEVICES={self.visible_devices}; "
             f"python {project_dir_q}/prepare_modelslim_config.py "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
             f"--sensitivity-metric {shlex.quote(self.metric)} "
