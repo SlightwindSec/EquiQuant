@@ -170,3 +170,24 @@ quantization_template_config:
       pdmix: false
     calib_dataset: "mix_calib.jsonl"
     calib_save_params: { part_file_size: 4 }
+
+# -----------------------------------------------
+# Automatic Quantization Tool (AQT)
+# 如果项目根目录存在 automatic-quantization-tool 且未显式关闭，将自动启用。
+# -----------------------------------------------
+aqt_enabled: true
+aqt_project_dir: "automatic-quantization-tool"
+aqt_quant_data_path: "/path/to/calib_data.txt"     # 必填：校准集路径
+aqt_quant_data_save_path: null                      # 可选：临时 token ids 存放路径
+aqt_quant_samples_num: 128
+aqt_quant_context_length: 4096
+aqt_sensitivity_metric: "mse"
+aqt_initial_budget_mb: 2500
+aqt_budget_step_mb: 500
+aqt_budget_step_down_mb: 250
+aqt_min_budget_mb: 0
+aqt_max_budget_mb: 12000
+aqt_tighten_margin_ratio: 0.01
+aqt_results_dir: "workspace/aqt_results"
+aqt_omp_num_threads: 32
+aqt_ascend_visible_devices: "0"

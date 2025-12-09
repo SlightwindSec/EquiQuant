@@ -1,4 +1,5 @@
 import copy
+import os
 import yaml
 
 _GLOBAL_CONFIG = None
@@ -137,6 +138,27 @@ class GlobalConfig:
             'health_check_endpoint': '/v1/models',
             'startup_timeout': 600,
             'args': vllm_args,
+        }
+
+        # Automatic Quantization Tool (AQT)
+        default_aqt_results = os.path.join(normalized['workspace']['base_dir'], 'aqt_results')
+        normalized['aqt'] = {
+            'enabled': cfg.get('aqt_enabled', True),
+            'project_dir': cfg.get('aqt_project_dir', 'automatic-quantization-tool'),
+            'quant_data_path': cfg.get('aqt_quant_data_path'),
+            'quant_data_save_path': cfg.get('aqt_quant_data_save_path'),
+            'quant_samples_num': cfg.get('aqt_quant_samples_num', 128),
+            'quant_context_length': cfg.get('aqt_quant_context_length', 4096),
+            'sensitivity_metric': cfg.get('aqt_sensitivity_metric', 'mse'),
+            'initial_budget_mb': cfg.get('aqt_initial_budget_mb', 2500),
+            'budget_step_mb': cfg.get('aqt_budget_step_mb', 500),
+            'budget_step_down_mb': cfg.get('aqt_budget_step_down_mb', 250),
+            'min_budget_mb': cfg.get('aqt_min_budget_mb', 0),
+            'max_budget_mb': cfg.get('aqt_max_budget_mb', 12000),
+            'tighten_margin_ratio': cfg.get('aqt_tighten_margin_ratio', 0.01),
+            'results_dir': cfg.get('aqt_results_dir', default_aqt_results),
+            'omp_num_threads': cfg.get('aqt_omp_num_threads', 32),
+            'ascend_visible_devices': cfg.get('aqt_ascend_visible_devices', "0"),
         }
 
         return normalized
