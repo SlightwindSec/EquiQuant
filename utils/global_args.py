@@ -44,14 +44,12 @@ class GlobalConfig:
         normalized['workspace'] = {
             'base_dir': cfg.get('workspace_base_dir', 'workspace'),
             'current_run_dir': cfg.get('workspace_current_run_dir', 'current_run'),
-            'history_dir': cfg.get('workspace_history_dir', 'history'),
             'best_weights_dir': cfg.get('workspace_best_weights_dir', 'best_weights'),
             'quant_config_name': cfg.get('workspace_quant_config_name', 'generated_modelslim_config.yaml'),
             'quant_weights_dir': cfg.get('workspace_quant_weights_dir', 'quantized_weights'),
         }
 
         normalized['strategy'] = {
-            'layer_pattern': cfg.get('strategy_layer_pattern', 'model.layers.{i}.mlp.down_proj'),
             'initial_fallback_layers': cfg.get('strategy_initial_fallback_layers', ['lm_head']),
         }
 
@@ -155,7 +153,6 @@ class GlobalConfig:
             'budget_step_down_mb': cfg.get('aqt_budget_step_down_mb', 250),
             'min_budget_mb': cfg.get('aqt_min_budget_mb', 0),
             'max_budget_mb': cfg.get('aqt_max_budget_mb', 12000),
-            'tighten_margin_ratio': cfg.get('aqt_tighten_margin_ratio', 0.01),
             'results_dir': cfg.get('aqt_results_dir', default_aqt_results),
             'omp_num_threads': cfg.get('aqt_omp_num_threads', 32),
             'ascend_visible_devices': cfg.get('aqt_ascend_visible_devices', "0"),

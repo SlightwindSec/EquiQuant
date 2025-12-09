@@ -29,7 +29,6 @@ class AutomaticQuantizationTool:
         self.min_budget = int(self.config.get('min_budget_mb', 0))
         self.step_up = int(self.config.get('budget_step_mb', 500))
         self.step_down = int(self.config.get('budget_step_down_mb', self.step_up))
-        self.tighten_margin_ratio = float(self.config.get('tighten_margin_ratio', 0.01))
         self.omp_num_threads = int(self.config.get('omp_num_threads', 32))
         self.visible_devices = str(self.config.get('ascend_visible_devices', "0"))
 

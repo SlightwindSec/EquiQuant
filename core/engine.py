@@ -9,7 +9,6 @@ from modules.quantizer import ModelslimQuantizer
 from modules.server import VllmServer
 from modules.bencher import AisBencher
 from utils.logger import logger
-from utils.model_inspector import ModelInspector
 
 
 class EquiQuantEngine:
@@ -17,12 +16,7 @@ class EquiQuantEngine:
         self.config = config
         self.workspace = config['workspace']
         self.evaluation_config = config['evaluation']
-        self.all_layers = ModelInspector.get_layers_by_pattern(
-            config['base_model_path'], 
-            config['strategy']['layer_pattern']
-        )
         self.strategy = TuningStrategy(
-            all_possible_layers=self.all_layers,
             initial_fallback=config['strategy']['initial_fallback_layers']
         )
         default_tolerance = self.evaluation_config.get('tolerance_ratio', 0.01)
@@ -221,7 +215,8 @@ class EquiQuantEngine:
             logger.error("AQT workflow invoked without availability.")
             return
 
-        base_disable_names = self.strategy.current_fallback
+        # 在 AQT 模式下，回退层完全由 AQT 的敏感度结果决定，这里不主动指定。
+        base_disable_names = []
 
         while True:
             self.run_id += 1

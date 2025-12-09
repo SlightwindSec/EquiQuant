@@ -2,18 +2,15 @@ from utils.logger import logger
 
 
 class TuningStrategy:
-    def __init__(self, all_possible_layers, initial_fallback):
+    def __init__(self, initial_fallback):
         """
         Args:
-            all_possible_layers (list): 由 ModelInspector 生成的可用层列表
             initial_fallback (list): 来自 config 的初始回退列表
         """
-        initial_set = set(initial_fallback)
-        self.candidate_layers = [layer for layer in all_possible_layers if layer not in initial_set]
         self.current_fallback = list(initial_fallback)
         self.history = []
         self.best_result = None
-        logger.info(f"Strategy initialized. {len(self.candidate_layers)} candidate layers available for fallback.")
+        logger.info(f"Strategy initialized. Fallback layers fixed: {len(self.current_fallback)}")
 
     def next_trial(self, last_results, target_accuracies):
         """
@@ -39,23 +36,10 @@ class TuningStrategy:
             logger.info(f"All {len(target_accuracies)} datasets passed target accuracy!")
             self.best_result = {'fallback': self.current_fallback, 'results': last_results}
             logger.info("Optimization goal reached. (Current strategy: STOP_SUCCESS)")
-            # TODO: 使用性能更好但是精度更差的量化算法
             return "STOP_SUCCESS"
-        else:
-            # 精度未达标
-            logger.warning(f"Accuracy not met for: {failed_datasets}. Adding fallback layer.")
-            if not self.candidate_layers:
-                # 没有更多层可以回退了
-                logger.error("No more candidate layers to fallback. Optimization failed.")
-                return "STOP_FAILED"
 
-            # TODO: 实现更智能的策略，例如基于敏感度分析
-            layer_to_add = self.candidate_layers.pop(0) 
-
-            logger.info(f"Adding layer to fallback: {layer_to_add}")
-            self.current_fallback.append(layer_to_add)
-
-            return self.current_fallback
+        logger.error(f"Accuracy not met for: {failed_datasets}. No more fallback steps configured. (STOP_FAILED)")
+        return "STOP_FAILED"
 
     def evaluate_results(self, last_results, target_accuracies):
         """

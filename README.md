@@ -81,16 +81,11 @@ EquiQuant 的**唯一用户配置文件**为 `config/config.yaml`。首次使用
 
 ### 2. 核心调优 / 回退策略
 
-- **`strategy_layer_pattern`**  
-  用于描述可被回退的层的命名模式，内部通过 `{i}` 枚举层号，  
-  例如：`"model.layers.{i}.mlp.down_proj"`。
-
 - **`strategy_initial_fallback_layers`**  
   初始就被视为“敏感层”、直接保留为浮点权重的层列表。  
   模板中给出了一个针对 Qwen3-32B 的示例，从 `lm_head` 到  
-  `model.layers.63.mlp.down_proj` 的一系列投影层。
-
-EquiQuant 在每轮评估后，会根据评估结果与敏感层分析，**在此列表基础上继续追加回退层**，并生成新的 ModelSlim YAML 再进行下一轮量化。
+  `model.layers.63.mlp.down_proj` 的一系列投影层。  
+  无 AQT 模式下现在只使用这份固定列表，不再自动追加回退层；AQT 模式下回退层完全由 AQT 产出。
 
 ### 3. 评估 / 精度相关
 

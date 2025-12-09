@@ -5,15 +5,13 @@ base_model_path: "/mnt/share/weight/Qwen3-32B"
 # -----------------------------------------------
 workspace_base_dir: "workspace"
 workspace_current_run_dir: "current_run"
-workspace_history_dir: "history"
 workspace_best_weights_dir: "best_weights"
 workspace_quant_config_name: "generated_modelslim_config.yaml"
 workspace_quant_weights_dir: "quantized_weights"
 
 # -----------------------------------------------
-# 核心调优策略
+# 核心调优策略（仅无 AQT 时使用固定回退层）
 # -----------------------------------------------
-strategy_layer_pattern: "model.layers.{i}.mlp.down_proj"
 strategy_initial_fallback_layers:
   - 'lm_head'
   - 'model.layers.0.mlp.down_proj'
@@ -187,7 +185,6 @@ aqt_budget_step_mb: 500
 aqt_budget_step_down_mb: 250
 aqt_min_budget_mb: 0
 aqt_max_budget_mb: 12000
-aqt_tighten_margin_ratio: 0.01
 aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
 aqt_ascend_visible_devices: "0"
