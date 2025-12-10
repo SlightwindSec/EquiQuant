@@ -15,7 +15,7 @@ class AutomaticQuantizationTool:
 
     def __init__(self, aqt_config: dict, base_model_path: str, workspace: dict):
         self.config = aqt_config or {}
-        self.base_model_path = base_model_path
+        self.base_model_path = os.path.abspath(base_model_path)
         self.workspace = workspace or {}
 
         self.project_dir = os.path.abspath(self.config.get('project_dir', 'automatic-quantization-tool'))
@@ -129,6 +129,9 @@ class AutomaticQuantizationTool:
         if not quant_data_path:
             logger.error("AQT requires `aqt_quant_data_path` in config.")
             return None
+        quant_data_path = os.path.abspath(quant_data_path)
+        base_config_path = os.path.abspath(base_config_path)
+        output_config_path = os.path.abspath(output_config_path)
 
         if not os.path.exists(base_config_path):
             logger.error(f"Base modelslim config for AQT not found: {base_config_path}")
@@ -151,7 +154,12 @@ class AutomaticQuantizationTool:
             return None
 
         # Step 2: 生成最终 YAML
-        prepare_cmd = self._prepare_config_cmd(budget_mb, sensitivity_scores_path, base_config_path, output_config_path)
+        prepare_cmd = self._prepare_config_cmd(
+            budget_mb,
+            sensitivity_scores_path,
+            base_config_path,
+            output_config_path
+        )
         success, stdout, stderr = ShellRunner.run_cmd(prepare_cmd, timeout=3600)
         if not success:
             logger.error("AQT prepare_modelslim_config failed.")
