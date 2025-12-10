@@ -41,6 +41,9 @@ class GlobalConfig:
         normalized = {}
         normalized['base_model_path'] = cfg.get('base_model_path')
 
+        w_bit = cfg.get('quantization_w_bit', 8)
+        a_bit = cfg.get('quantization_a_bit', 8)
+
         normalized['workspace'] = {
             'base_dir': cfg.get('workspace_base_dir', 'workspace'),
             'current_run_dir': cfg.get('workspace_current_run_dir', 'current_run'),
@@ -60,6 +63,8 @@ class GlobalConfig:
             'device': cfg.get('quantization_device', 'npu'),
             'trust_remote_code': cfg.get('quantization_trust_remote_code', True),
             'template_config': copy.deepcopy(quant_template),
+            'w_bit': w_bit,
+            'a_bit': a_bit,
         }
         if not normalized['quantization']['template_config']:
             raise ValueError("`quantization_template_config` must be provided in config/config.yaml.")
@@ -144,7 +149,6 @@ class GlobalConfig:
             'enabled': cfg.get('aqt_enabled', True),
             'project_dir': cfg.get('aqt_project_dir', 'automatic-quantization-tool'),
             'quant_data_path': cfg.get('aqt_quant_data_path'),
-            'quant_data_save_path': cfg.get('aqt_quant_data_save_path'),
             'quant_samples_num': cfg.get('aqt_quant_samples_num', 128),
             'quant_context_length': cfg.get('aqt_quant_context_length', 4096),
             'sensitivity_metric': cfg.get('aqt_sensitivity_metric', 'mse'),
@@ -156,6 +160,7 @@ class GlobalConfig:
             'results_dir': cfg.get('aqt_results_dir', default_aqt_results),
             'omp_num_threads': cfg.get('aqt_omp_num_threads', 32),
             'ascend_visible_devices': cfg.get('aqt_ascend_visible_devices', "0"),
+            'weight_quant_bits': w_bit,
         }
 
         return normalized

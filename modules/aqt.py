@@ -24,6 +24,7 @@ class AutomaticQuantizationTool:
         self.results_root = os.path.abspath(
             self.config.get('results_dir') or os.path.join(self.workspace.get('base_dir', 'workspace'), "aqt_results")
         )
+        self.weight_quant_bits = int(self.config.get('weight_quant_bits', 8))
         self.initial_budget = int(self.config.get('initial_budget_mb', 2500))
         self.max_budget = int(self.config.get('max_budget_mb', self.initial_budget))
         self.min_budget = int(self.config.get('min_budget_mb', 0))
@@ -107,6 +108,7 @@ class AutomaticQuantizationTool:
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
             f"--sensitivity-metric {shlex.quote(self.metric)} "
             f"--ckpt-size-budget-mb {budget_mb} "
+            f"--weight-quant-bits {self.weight_quant_bits} "
             f"--sensitivity-scores-path {shlex.quote(sensitivity_scores_path)} "
             f"--template-path {shlex.quote(template_path)} "
             f"--output-path {shlex.quote(output_path)}"
@@ -133,7 +135,7 @@ class AutomaticQuantizationTool:
             return None
 
         save_dir = self._build_save_dir(run_id, budget_mb)
-        quant_data_save_path = self.config.get('quant_data_save_path') or os.path.join(save_dir, "calib_data.pt")
+        quant_data_save_path = os.path.join(save_dir, "calib_data.pt")
         os.makedirs(os.path.dirname(quant_data_save_path), exist_ok=True)
 
         # Step 1: 敏感度分析

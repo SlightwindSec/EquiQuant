@@ -80,6 +80,21 @@ class ModelslimQuantizer:
         try:
             config_data = copy.deepcopy(self.config['template_config'])
 
+            # 0. 统一写入全局量化 bit 配置
+            w_bit = self.config.get('w_bit')
+            a_bit = self.config.get('a_bit')
+            label = config_data.setdefault('metadata', {}).setdefault('label', {})
+            if w_bit is not None:
+                label['w_bit'] = w_bit
+            if a_bit is not None:
+                label['a_bit'] = a_bit
+
+            calib_cfg = config_data.setdefault('spec', {}).setdefault('calib_cfg', {})
+            if w_bit is not None:
+                calib_cfg['w_bit'] = w_bit
+            if a_bit is not None:
+                calib_cfg['a_bit'] = a_bit
+
             # 1. 插入动态的回退层列表（可选，AQT 模式下可以为 None 以便由 AQT 决定）
             if disable_names is None:
                 disable_names = self.fallback_layers
