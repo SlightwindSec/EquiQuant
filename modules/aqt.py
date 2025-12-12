@@ -170,4 +170,3 @@ class AutomaticQuantizationTool:
             return None
 
         return output_config_path
-
