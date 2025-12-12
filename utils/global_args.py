@@ -41,8 +41,10 @@ class GlobalConfig:
         normalized = {}
         normalized['base_model_path'] = cfg.get('base_model_path')
 
-        w_bit = cfg.get('quantization_w_bit', 8)
-        a_bit = cfg.get('quantization_a_bit', 8)
+        # 优先从quantization_template_config中读取w_bit/a_bit，如果没有则从旧字段读取
+        quant_template = cfg.get('quantization_template_config') or {}
+        w_bit = quant_template.get('w_bit') or cfg.get('quantization_w_bit', 8)
+        a_bit = quant_template.get('a_bit') or cfg.get('quantization_a_bit', 8)
 
         normalized['workspace'] = {
             'base_dir': cfg.get('workspace_base_dir', 'workspace'),
@@ -56,7 +58,6 @@ class GlobalConfig:
             'initial_fallback_layers': cfg.get('strategy_initial_fallback_layers', ['lm_head']),
         }
 
-        quant_template = cfg.get('quantization_template_config') or {}
         normalized['quantization'] = {
             'visible_devices': cfg.get('quantization_visible_devices', '0,1,2,3'),
             'model_type': cfg.get('quantization_model_type', 'Qwen3-32B'),

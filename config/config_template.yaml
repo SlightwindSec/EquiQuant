@@ -14,70 +14,6 @@ workspace_quant_weights_dir: "quantized_weights"
 # -----------------------------------------------
 strategy_initial_fallback_layers:
   - 'lm_head'
-  - 'model.layers.0.mlp.down_proj'
-  - 'model.layers.1.mlp.down_proj'
-  - 'model.layers.2.mlp.down_proj'
-  - 'model.layers.3.mlp.down_proj'
-  - 'model.layers.4.mlp.down_proj'
-  - 'model.layers.5.mlp.down_proj'
-  - 'model.layers.6.mlp.down_proj'
-  - 'model.layers.7.mlp.down_proj'
-  - 'model.layers.8.mlp.down_proj'
-  - 'model.layers.9.mlp.down_proj'
-  - 'model.layers.10.mlp.down_proj'
-  - 'model.layers.11.mlp.down_proj'
-  - 'model.layers.12.mlp.down_proj'
-  - 'model.layers.13.mlp.down_proj'
-  - 'model.layers.14.mlp.down_proj'
-  - 'model.layers.15.mlp.down_proj'
-  - 'model.layers.16.mlp.down_proj'
-  - 'model.layers.17.mlp.down_proj'
-  - 'model.layers.18.mlp.down_proj'
-  - 'model.layers.19.mlp.down_proj'
-  - 'model.layers.20.mlp.down_proj'
-  - 'model.layers.21.mlp.down_proj'
-  - 'model.layers.22.mlp.down_proj'
-  - 'model.layers.23.mlp.down_proj'
-  - 'model.layers.24.mlp.down_proj'
-  - 'model.layers.25.mlp.down_proj'
-  - 'model.layers.26.mlp.down_proj'
-  - 'model.layers.27.mlp.down_proj'
-  - 'model.layers.28.mlp.down_proj'
-  - 'model.layers.29.mlp.down_proj'
-  - 'model.layers.30.mlp.down_proj'
-  - 'model.layers.31.mlp.down_proj'
-  - 'model.layers.32.mlp.down_proj'
-  - 'model.layers.33.mlp.down_proj'
-  - 'model.layers.34.mlp.down_proj'
-  - 'model.layers.35.mlp.down_proj'
-  - 'model.layers.36.mlp.down_proj'
-  - 'model.layers.37.mlp.down_proj'
-  - 'model.layers.38.mlp.down_proj'
-  - 'model.layers.39.mlp.down_proj'
-  - 'model.layers.40.mlp.down_proj'
-  - 'model.layers.41.mlp.down_proj'
-  - 'model.layers.42.mlp.down_proj'
-  - 'model.layers.43.mlp.down_proj'
-  - 'model.layers.44.mlp.down_proj'
-  - 'model.layers.45.mlp.down_proj'
-  - 'model.layers.46.mlp.down_proj'
-  - 'model.layers.47.mlp.down_proj'
-  - 'model.layers.48.mlp.down_proj'
-  - 'model.layers.49.mlp.down_proj'
-  - 'model.layers.50.mlp.down_proj'
-  - 'model.layers.51.mlp.down_proj'
-  - 'model.layers.52.mlp.down_proj'
-  - 'model.layers.53.mlp.down_proj'
-  - 'model.layers.54.mlp.down_proj'
-  - 'model.layers.55.mlp.down_proj'
-  - 'model.layers.56.mlp.down_proj'
-  - 'model.layers.57.mlp.down_proj'
-  - 'model.layers.58.mlp.down_proj'
-  - 'model.layers.59.mlp.down_proj'
-  - 'model.layers.60.mlp.down_proj'
-  - 'model.layers.61.mlp.down_proj'
-  - 'model.layers.62.mlp.down_proj'
-  - 'model.layers.63.mlp.down_proj'
 
 # -----------------------------------------------
 # 评估配置
@@ -145,8 +81,6 @@ vllm_args:
 # -----------------------------------------------
 # 量化器 (Modelslim) 配置
 # -----------------------------------------------
-quantization_w_bit: 8
-quantization_a_bit: 8
 quantization_visible_devices: "0,1,2,3"
 quantization_model_type: "Qwen3-32B"
 quantization_device: "npu"
@@ -154,20 +88,74 @@ quantization_trust_remote_code: true
 
 # Modelslim YAML 配置模板
 quantization_template_config:
-  apiversion: modelslim_v0
-  metadata:
-    config_id: qwen3-32b-dense-w8a8
-    score: 90
-    verified_model_types:
-      - Qwen3-32B
-    label: { is_sparse: false, kv_cache: false }
-  spec:
-    # anti_cfg: { anti_method: m4 }
-    calib_cfg:
-      mm_tensor: false
-      pdmix: false
-    calib_dataset: "mix_calib.jsonl"
-    calib_save_params: { part_file_size: 4 }
+  w_bit: 8  # 权重量化位数
+  a_bit: 8  # 激活量化位数
+
+  v1:
+    metadata:
+      config_id: qwen3-dense-w8a8-v1
+      score: 90
+      label:
+        is_sparse: false
+        kv_cache: false
+    
+    qconfigs:
+      default_w8a8_dynamic:
+        act:
+          scope: "per_token"      # 激活值量化范围: per_token 或 per_tensor
+          dtype: "int8"           # 数据类型: int8
+          symmetric: true         # 是否对称量化
+          method: "minmax"        # 量化方法: minmax
+        weight:
+          scope: "per_channel"    # 权重量化范围: per_channel 或 per_group
+          dtype: "int8"           # 数据类型: int8
+          symmetric: true         # 是否对称量化
+          method: "minmax"        # 量化方法: minmax
+      
+      # w4a8量化配置（4bit权重，8bit激活）
+      default_w4a8_dynamic:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_group"      # 4bit权重通常使用per_group
+          dtype: "int4"           # 4bit权重
+          symmetric: true
+          method: "minmax"
+          ext:
+            group_size: 64        # 4bit权重的分组大小
+    
+    # v1格式的process配置（定义量化策略组）
+    # 注意：include/exclude不需要配置，AQT会自动填充
+    process:
+      - type: "group"
+        configs:
+          - type: "linear_quant"
+            qconfig_ref: "default_w8a8_dynamic"  # 引用上面定义的qconfig锚点
+
+    save:
+      - type: "ascendv1_saver"
+        part_file_size: 4
+  
+  # modelslim_v0 格式配置（legacy格式，非AQT场景使用，将来会被移除）
+  v0:
+    metadata:
+      config_id: qwen3-32b-dense-w8a8
+      score: 90
+      verified_model_types:
+        - Qwen3-32B
+      label:
+        is_sparse: false
+        kv_cache: false
+    spec:
+      calib_cfg:
+        mm_tensor: false
+        pdmix: false
+      calib_dataset: "mix_calib.jsonl"
+      calib_save_params:
+        part_file_size: 4
 
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)

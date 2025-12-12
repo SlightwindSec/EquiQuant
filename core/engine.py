@@ -147,6 +147,17 @@ class EquiQuantEngine:
     # Workflows
     # ------------------------------------------------------------------ #
     def _run_without_aqt(self):
+        template = self.config['quantization']['template_config']
+        v1_config = template.get('v1')
+        api_version = template.get('apiversion')
+        
+        if v1_config or api_version == 'modelslim_v1':
+            logger.warning(
+                "modelslim_v1 format is detected in non-AQT mode. "
+                "v1 format is primarily designed for AQT scenarios. "
+                "For non-AQT scenarios, please use v0 format (legacy, but currently supported)."
+            )
+        
         while True:
             self.run_id += 1
             logger.info(f"\n{'='*20} Trial {self.run_id} {'='*20}")
