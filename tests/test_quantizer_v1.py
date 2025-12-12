@@ -126,6 +126,78 @@ class TestModelslimV1Config(unittest.TestCase):
         self.assertIs(process_cfgs[0]["qconfig"], doc["default_w4a8_dynamic"])
         self.assertIs(process_cfgs[1]["qconfig"], doc["default_w8a8_dynamic"])
 
+    def test_default_template_outputs_expected_structure(self):
+        quant_config = {
+            "template_config": {
+                "v1": {
+                    "metadata": {
+                        "config_id": "qwen3-dense-w8a8-v1",
+                        "score": 90,
+                        "verified_model_types": ["Qwen3-32B", "Qwen3-14B", "Qwen3-8B"],
+                        "label": {"is_sparse": False, "kv_cache": False},
+                    },
+                    # 提供 qconfigs 但不提供 process，触发默认生成逻辑（应包含 w4a8 + w8a8 两个 qconfig）
+                    "qconfigs": {
+                        "default_w8a8_dynamic": {
+                            "act": {"scope": "per_token", "dtype": "int8", "symmetric": True, "method": "minmax"},
+                            "weight": {"scope": "per_channel", "dtype": "int8", "symmetric": True, "method": "minmax"},
+                        },
+                        "default_w4a8_dynamic": {
+                            "act": {"scope": "per_token", "dtype": "int8", "symmetric": True, "method": "minmax"},
+                            "weight": {
+                                "scope": "per_group",
+                                "dtype": "int4",
+                                "symmetric": True,
+                                "method": "minmax",
+                                "ext": {"group_size": 64},
+                            },
+                        },
+                    },
+                    "save": [{"type": "ascendv1_saver", "part_file_size": 4}],
+                }
+            },
+            "w_bit": 8,
+            "a_bit": 8,
+            "model_type": "Qwen3-32B",
+            "visible_devices": "0",
+            "device": "npu",
+            "trust_remote_code": True,
+        }
+
+        output_path = os.path.join(self.tmpdir.name, "modelslim_v1_default.yaml")
+        quantizer = ModelslimQuantizer(
+            quant_config=quant_config,
+            base_model_path="/tmp/dummy-model",
+            fallback_layers=[],
+            output_config_path=output_path,
+            output_weights_path=os.path.join(self.tmpdir.name, "quantized"),
+        )
+
+        generated_path = quantizer.generate_config_only(output_path=output_path)
+        self.assertTrue(os.path.exists(generated_path))
+
+        with open(generated_path, "r", encoding="utf-8") as f:
+            yaml_text = f.read()
+
+        # 需要有显式锚点名，不应出现自动生成的 id 锚点
+        self.assertIn("default_w8a8_dynamic: &default_w8a8_dynamic", yaml_text)
+        self.assertIn("default_w4a8_dynamic: &default_w4a8_dynamic", yaml_text)
+        self.assertIn("qconfig: *default_w4a8_dynamic", yaml_text)
+        self.assertIn("qconfig: *default_w8a8_dynamic", yaml_text)
+        self.assertNotIn("&id00", yaml_text)
+
+        yaml = YAML()
+        doc = yaml.load(yaml_text)
+        self.assertEqual(
+            doc["metadata"]["verified_model_types"],
+            ["Qwen3-32B", "Qwen3-14B", "Qwen3-8B"],
+        )
+
+        process_cfgs = doc["spec"]["process"][0]["configs"]
+        self.assertEqual(len(process_cfgs), 2)
+        self.assertIs(process_cfgs[0]["qconfig"], doc["default_w4a8_dynamic"])
+        self.assertIs(process_cfgs[1]["qconfig"], doc["default_w8a8_dynamic"])
+
 
 if __name__ == "__main__":
     unittest.main()

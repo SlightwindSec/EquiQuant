@@ -119,8 +119,18 @@ class ModelslimQuantizer:
             yaml = YAML()
             yaml.preserve_quotes = True
             yaml.width = 4096  # 避免长行被截断
-            # 确保重复节点会使用锚点/引用输出
-            yaml.representer.ignore_aliases = lambda *args: False
+
+            def _should_ignore_aliases(data):
+                """
+                只为显式设置了锚点的节点保留 alias，避免标量被自动抽象出锚点。
+                """
+                if hasattr(data, "yaml_anchor"):
+                    anchor = data.yaml_anchor()
+                    if anchor and anchor.always_dump:
+                        return False
+                return True
+
+            yaml.representer.ignore_aliases = _should_ignore_aliases
 
             # 构建根配置
             root = CommentedMap()
@@ -131,7 +141,11 @@ class ModelslimQuantizer:
             v1_metadata = v1_config.get('metadata', {})
             metadata['config_id'] = v1_metadata.get('config_id', 'qwen3-dense-w8a8-v1')
             metadata['score'] = v1_metadata.get('score', 90)
-            metadata['verified_model_types'] = [self.config['model_type']]
+            verified_model_types = v1_metadata.get('verified_model_types')
+            if verified_model_types:
+                metadata['verified_model_types'] = list(verified_model_types)
+            else:
+                metadata['verified_model_types'] = [self.config['model_type']]
 
             # label部分
             label = CommentedMap()
@@ -150,74 +164,57 @@ class ModelslimQuantizer:
             v1_qconfigs = v1_config.get('qconfigs', {})
             qconfig_nodes = {}
 
-            # 如果没有配置v1_qconfigs，根据w_bit和a_bit生成默认配置
-            if not v1_qconfigs:
-                # 根据w_bit选择合适的默认qconfig名称
-                if w_bit == 4:
-                    qconfig_name = 'default_w4a8_dynamic'
-                else:
-                    qconfig_name = 'default_w8a8_dynamic'
-
-                # 创建默认qconfig
-                default_qconfig = CommentedMap()
+            def _add_qconfig(name, act_cfg, weight_cfg):
+                qconfig = CommentedMap()
                 act = CommentedMap()
-                act['scope'] = 'per_token'
-                act['dtype'] = 'int8'
-                act['symmetric'] = True
-                act['method'] = 'minmax'
-                default_qconfig['act'] = act
+                act['scope'] = act_cfg.get('scope', 'per_token')
+                act['dtype'] = act_cfg.get('dtype', 'int8')
+                act['symmetric'] = act_cfg.get('symmetric', True)
+                act['method'] = act_cfg.get('method', 'minmax')
+                qconfig['act'] = act
 
                 weight = CommentedMap()
-                weight['scope'] = 'per_channel' if w_bit == 8 else 'per_group'
-                weight['dtype'] = f'int{w_bit}'
-                weight['symmetric'] = True
-                weight['method'] = 'minmax'
-                if w_bit == 4:
-                    weight['ext'] = CommentedMap({'group_size': 64})
-                default_qconfig['weight'] = weight
+                weight['scope'] = weight_cfg.get('scope', 'per_channel')
+                weight['dtype'] = weight_cfg.get('dtype', 'int8')
+                weight['symmetric'] = weight_cfg.get('symmetric', True)
+                weight['method'] = weight_cfg.get('method', 'minmax')
+                if 'ext' in weight_cfg:
+                    weight['ext'] = CommentedMap(weight_cfg['ext'])
+                qconfig['weight'] = weight
 
-                default_qconfig.yaml_set_anchor(qconfig_name, always_dump=True)
-                qconfig_nodes[qconfig_name] = default_qconfig
-                root[qconfig_name] = default_qconfig
+                qconfig.yaml_set_anchor(name, always_dump=True)
+                qconfig_nodes[name] = qconfig
+                root[name] = qconfig
+
+            # 如果没有配置v1_qconfigs，根据w_bit和a_bit生成默认配置（同时补齐 w8a8 和 w4a8 两套）
+            if not v1_qconfigs:
+                _add_qconfig(
+                    'default_w8a8_dynamic',
+                    {'scope': 'per_token', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
+                    {'scope': 'per_channel', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
+                )
+                _add_qconfig(
+                    'default_w4a8_dynamic',
+                    {'scope': 'per_token', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
+                    {'scope': 'per_group', 'dtype': 'int4', 'symmetric': True, 'method': 'minmax', 'ext': {'group_size': 64}},
+                )
             else:
                 # 生成所有在v1_qconfigs中定义的qconfig锚点
                 for qconfig_name, qconfig_template in v1_qconfigs.items():
-                    qconfig = CommentedMap()
+                    _add_qconfig(
+                        qconfig_name,
+                        qconfig_template.get('act', {}),
+                        qconfig_template.get('weight', {}),
+                    )
 
-                    # act配置
-                    act_cfg = qconfig_template.get('act', {})
-                    act = CommentedMap()
-                    act['scope'] = act_cfg.get('scope', 'per_token')
-                    act['dtype'] = act_cfg.get('dtype', 'int8')
-                    act['symmetric'] = act_cfg.get('symmetric', True)
-                    act['method'] = act_cfg.get('method', 'minmax')
-                    qconfig['act'] = act
-
-                    # weight配置
-                    weight_cfg = qconfig_template.get('weight', {})
-                    weight = CommentedMap()
-                    weight['scope'] = weight_cfg.get('scope', 'per_channel')
-                    weight['dtype'] = weight_cfg.get('dtype', 'int8')
-                    weight['symmetric'] = weight_cfg.get('symmetric', True)
-                    weight['method'] = weight_cfg.get('method', 'minmax')
-                    if 'ext' in weight_cfg:
-                        weight['ext'] = CommentedMap(weight_cfg['ext'])
-                    qconfig['weight'] = weight
-
-                    # 设置锚点名称
-                    qconfig.yaml_set_anchor(qconfig_name, always_dump=True)
-                    qconfig_nodes[qconfig_name] = qconfig
-                    root[qconfig_name] = qconfig
-
-            # 根据w_bit选择合适的默认qconfig名称（用于process配置中）
+            # 根据w_bit选择合适的默认qconfig名称（用于process配置中），如果不存在则使用第一个
             if w_bit == 4:
                 default_qconfig_name = 'default_w4a8_dynamic'
             else:
                 default_qconfig_name = 'default_w8a8_dynamic'
 
-            # 如果默认qconfig不存在，使用第一个定义的qconfig
-            if default_qconfig_name not in v1_qconfigs and v1_qconfigs:
-                default_qconfig_name = list(v1_qconfigs.keys())[0]
+            if default_qconfig_name not in qconfig_nodes and qconfig_nodes:
+                default_qconfig_name = list(qconfig_nodes.keys())[0]
 
             # spec部分
             spec = CommentedMap()
@@ -229,14 +226,24 @@ class ModelslimQuantizer:
                 process_group = CommentedMap()
                 process_group['type'] = 'group'
                 configs = []
-                linear_quant = CommentedMap()
-                linear_quant['type'] = 'linear_quant'
-                # 使用锚点引用（通过共享节点创建 YAML alias）
-                linear_quant['qconfig'] = qconfig_nodes[default_qconfig_name]
-                # include/exclude不需要配置，AQT会自动填充
-                linear_quant['include'] = []
-                linear_quant['exclude'] = []
-                configs.append(linear_quant)
+
+                def _append_linear_quant(qconfig_name):
+                    linear_quant = CommentedMap()
+                    linear_quant['type'] = 'linear_quant'
+                    linear_quant['qconfig'] = qconfig_nodes[qconfig_name]
+                    linear_quant['include'] = []
+                    linear_quant['exclude'] = []
+                    configs.append(linear_quant)
+
+                # 默认情况下优先输出 w4a8 -> w8a8 的顺序，如果存在的话
+                preferred_order = ['default_w4a8_dynamic', 'default_w8a8_dynamic']
+                existing_order = [name for name in preferred_order if name in qconfig_nodes]
+                if not existing_order:
+                    existing_order = list(qconfig_nodes.keys())
+
+                for name in existing_order:
+                    _append_linear_quant(name)
+
                 process_group['configs'] = configs
                 spec['process'] = [process_group]
             else:
