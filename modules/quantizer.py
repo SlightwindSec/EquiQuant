@@ -160,6 +160,8 @@ class ModelslimQuantizer:
             yaml = YAML()
             yaml.preserve_quotes = True
             yaml.width = 4096  # 避免长行被截断
+            # 确保重复节点会使用锚点/引用输出
+            yaml.representer.ignore_aliases = lambda *args: False
             
             # 构建根配置
             root = CommentedMap()
@@ -185,8 +187,9 @@ class ModelslimQuantizer:
             root['metadata'] = metadata
             
             # 定义qconfig锚点（从模板的v1.qconfigs中读取）
-            # 生成所有在qconfigs中定义的qconfig锚点
+            # 生成所有在qconfigs中定义的qconfig锚点，同时缓存节点供别处引用
             v1_qconfigs = v1_config.get('qconfigs', {})
+            qconfig_nodes = {}
             
             # 如果没有配置v1_qconfigs，根据w_bit和a_bit生成默认配置
             if not v1_qconfigs:
@@ -214,7 +217,8 @@ class ModelslimQuantizer:
                     weight['ext'] = CommentedMap({'group_size': 64})
                 default_qconfig['weight'] = weight
                 
-                default_qconfig.yaml_set_anchor(qconfig_name)
+                default_qconfig.yaml_set_anchor(qconfig_name, always_dump=True)
+                qconfig_nodes[qconfig_name] = default_qconfig
                 root[qconfig_name] = default_qconfig
             else:
                 # 生成所有在v1_qconfigs中定义的qconfig锚点
@@ -242,7 +246,8 @@ class ModelslimQuantizer:
                     qconfig['weight'] = weight
                     
                     # 设置锚点名称
-                    qconfig.yaml_set_anchor(qconfig_name)
+                    qconfig.yaml_set_anchor(qconfig_name, always_dump=True)
+                    qconfig_nodes[qconfig_name] = qconfig
                     root[qconfig_name] = qconfig
             
             # 根据w_bit选择合适的默认qconfig名称（用于process配置中）
@@ -267,8 +272,8 @@ class ModelslimQuantizer:
                 configs = []
                 linear_quant = CommentedMap()
                 linear_quant['type'] = 'linear_quant'
-                # 使用锚点引用（ruamel.yaml会自动处理字符串形式的锚点引用）
-                linear_quant['qconfig'] = PlainScalarString(f'*{default_qconfig_name}')
+                # 使用锚点引用（通过共享节点创建 YAML alias）
+                linear_quant['qconfig'] = qconfig_nodes[default_qconfig_name]
                 # include/exclude不需要配置，AQT会自动填充
                 linear_quant['include'] = []
                 linear_quant['exclude'] = []
@@ -287,7 +292,10 @@ class ModelslimQuantizer:
                             # 如果qconfig_ref存在，转换为锚点引用
                             if 'qconfig_ref' in cfg_map:
                                 ref_name = cfg_map.pop('qconfig_ref')
-                                cfg_map['qconfig'] = PlainScalarString(f'*{ref_name}')
+                                ref_qconfig = qconfig_nodes.get(ref_name)
+                                if ref_qconfig is None:
+                                    raise ValueError(f"qconfig_ref '{ref_name}' not found in defined qconfigs")
+                                cfg_map['qconfig'] = ref_qconfig
                             # include/exclude不需要用户配置，AQT会自动填充，但生成时留空
                             if 'include' not in cfg_map:
                                 cfg_map['include'] = []
