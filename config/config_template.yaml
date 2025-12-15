@@ -25,7 +25,7 @@ evaluation_datasets:
   ceval:
     config_name: "ceval_gen_5_shot_str"
     mode: "all"
-    target_accuracy: 50.0
+    target_accuracy: 81.87
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"

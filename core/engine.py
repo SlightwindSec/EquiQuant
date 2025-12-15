@@ -139,8 +139,7 @@ class EquiQuantEngine:
         if target is None:
             raise ValueError("Target accuracy must be provided for each dataset.")
 
-        lower = target * (1 - tolerance)
-        upper = target * (1 + tolerance)
+        lower, upper = target - tolerance, target + tolerance
         return lower, upper
 
     # ------------------------------------------------------------------ #
