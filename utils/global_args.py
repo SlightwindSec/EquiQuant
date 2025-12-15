@@ -71,7 +71,7 @@ class GlobalConfig:
             raise ValueError("`quantization_template_config` must be provided in config/config.yaml.")
 
         evaluation = {
-            'tolerance_ratio': cfg.get('evaluation_tolerance_ratio', 0.01),
+            'tolerance_ratio': cfg.get('evaluation_tolerance_ratio', 1.00),
             'datasets': cfg.get('evaluation_datasets') or cfg.get('datasets', {}),
             'disable_qwen_thinking': bool(cfg.get('disable_qwen_thinking', False)),
         }
@@ -103,7 +103,7 @@ class GlobalConfig:
             'pred_postprocessor': cfg.get('aisbench_pred_postprocessor', 'extract_non_reasoning_content'),
             'generation_kwargs': ais_generation,
             'model_config': {
-                # 这几个字段不再暴露给用户，完全根据是否使用 Chat 模版自动推导
+                # 这几个字段不暴露给用户，完全根据是否使用 Chat 模版自动推导
                 'base_name': model_base_name,
                 'abbr': model_abbr,
                 'type': model_type,

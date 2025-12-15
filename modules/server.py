@@ -96,10 +96,9 @@ class VllmServer:
         
         logger.info(f"Waiting for server to be ready at {self.health_check_url} ...")
         if not self._wait_for_ready():
-            logger.error("VLLM server failed to start. Check log: {self.log_file}")
-            # 尝试停止僵尸进程
+            logger.error(f"VLLM server failed to start. Check log: {self.log_file}")
             try:
-                self.stop()
+                self.stop()  # 尝试停止僵尸进程
             except:
                 pass
             return False

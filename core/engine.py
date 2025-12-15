@@ -19,7 +19,7 @@ class EquiQuantEngine:
         self.strategy = TuningStrategy(
             initial_fallback=config['strategy']['initial_fallback_layers']
         )
-        default_tolerance = self.evaluation_config.get('tolerance_ratio', 0.01)
+        default_tolerance = self.evaluation_config.get('tolerance_ratio', 1.00)
         self.target_accuracies = {}
         for name, data in self.evaluation_config.get('datasets', {}).items():
             tolerance = data.get('tolerance_ratio', default_tolerance)
@@ -131,7 +131,7 @@ class EquiQuantEngine:
     def _calculate_bounds(self, target_cfg):
         if isinstance(target_cfg, dict):
             target = target_cfg.get('target_accuracy') or target_cfg.get('target')
-            tolerance = target_cfg.get('tolerance_ratio') or target_cfg.get('tolerance', 0.01)
+            tolerance = target_cfg.get('tolerance_ratio') or target_cfg.get('tolerance', 1.00)
         else:
             target = target_cfg
             tolerance = 0.0

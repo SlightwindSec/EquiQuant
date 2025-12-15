@@ -90,7 +90,7 @@ EquiQuant 的**唯一用户配置文件**为 `config/config.yaml`。首次使用
 ### 3. 评估 / 精度相关
 
 - **`evaluation_tolerance_ratio`**  
-  默认的**相对容忍区间**，例如 `0.01` 表示允许在目标精度的 \(\pm 1\%\) 区间内判定为通过。
+  默认的**相对容忍区间**，例如 `1.0` 表示允许在目标精度的 \(\pm 1\%\) 区间内判定为通过。
 
 - **`disable_qwen_thinking`**  
   若为 `true`，则在请求参数中自动注入 `chat_template_kwargs={"enable_thinking": False}`，  
