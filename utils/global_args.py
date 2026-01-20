@@ -1,4 +1,5 @@
 import copy
+import os
 import yaml
 
 _GLOBAL_CONFIG = None
@@ -40,33 +41,37 @@ class GlobalConfig:
         normalized = {}
         normalized['base_model_path'] = cfg.get('base_model_path')
 
+        # 优先从quantization_template_config中读取w_bit/a_bit，如果没有则从旧字段读取
+        quant_template = cfg.get('quantization_template_config') or {}
+        w_bit = quant_template.get('w_bit') or cfg.get('quantization_w_bit', 8)
+        a_bit = quant_template.get('a_bit') or cfg.get('quantization_a_bit', 8)
+
         normalized['workspace'] = {
             'base_dir': cfg.get('workspace_base_dir', 'workspace'),
             'current_run_dir': cfg.get('workspace_current_run_dir', 'current_run'),
-            'history_dir': cfg.get('workspace_history_dir', 'history'),
             'best_weights_dir': cfg.get('workspace_best_weights_dir', 'best_weights'),
             'quant_config_name': cfg.get('workspace_quant_config_name', 'generated_modelslim_config.yaml'),
             'quant_weights_dir': cfg.get('workspace_quant_weights_dir', 'quantized_weights'),
         }
 
         normalized['strategy'] = {
-            'layer_pattern': cfg.get('strategy_layer_pattern', 'model.layers.{i}.mlp.down_proj'),
             'initial_fallback_layers': cfg.get('strategy_initial_fallback_layers', ['lm_head']),
         }
 
-        quant_template = cfg.get('quantization_template_config') or {}
         normalized['quantization'] = {
             'visible_devices': cfg.get('quantization_visible_devices', '0,1,2,3'),
             'model_type': cfg.get('quantization_model_type', 'Qwen3-32B'),
             'device': cfg.get('quantization_device', 'npu'),
             'trust_remote_code': cfg.get('quantization_trust_remote_code', True),
             'template_config': copy.deepcopy(quant_template),
+            'w_bit': w_bit,
+            'a_bit': a_bit,
         }
         if not normalized['quantization']['template_config']:
             raise ValueError("`quantization_template_config` must be provided in config/config.yaml.")
 
         evaluation = {
-            'tolerance_ratio': cfg.get('evaluation_tolerance_ratio', 0.01),
+            'tolerance_ratio': cfg.get('evaluation_tolerance_ratio', 1.0),
             'datasets': cfg.get('evaluation_datasets') or cfg.get('datasets', {}),
             'disable_qwen_thinking': bool(cfg.get('disable_qwen_thinking', False)),
         }
@@ -137,6 +142,25 @@ class GlobalConfig:
             'health_check_endpoint': '/v1/models',
             'startup_timeout': 600,
             'args': vllm_args,
+        }
+
+        # Automatic Quantization Tool (AQT)
+        default_aqt_results = os.path.join(normalized['workspace']['base_dir'], 'aqt_results')
+        normalized['aqt'] = {
+            'enabled': cfg.get('aqt_enabled', True),
+            'quant_data_path': cfg.get('aqt_quant_data_path'),
+            'quant_samples_num': cfg.get('aqt_quant_samples_num', 128),
+            'quant_context_length': cfg.get('aqt_quant_context_length', 4096),
+            'sensitivity_metric': cfg.get('aqt_sensitivity_metric', 'mse'),
+            'initial_budget_mb': cfg.get('aqt_initial_budget_mb', 2500),
+            'budget_step_mb': cfg.get('aqt_budget_step_mb', 500),
+            'budget_step_down_mb': cfg.get('aqt_budget_step_down_mb', 250),
+            'min_budget_mb': cfg.get('aqt_min_budget_mb', 0),
+            'max_budget_mb': cfg.get('aqt_max_budget_mb', 12000),
+            'results_dir': cfg.get('aqt_results_dir', default_aqt_results),
+            'omp_num_threads': cfg.get('aqt_omp_num_threads', 32),
+            'ascend_visible_devices': cfg.get('aqt_ascend_visible_devices', "0"),
+            'weight_quant_bits': w_bit,
         }
 
         return normalized

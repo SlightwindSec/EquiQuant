@@ -1,0 +1,10 @@
+ruamel.yaml
+torch
+torch-npu
+accelerate
+transformers
+msmodelslim
+safetensors
+pulp
+matplotlib
+pyyaml
