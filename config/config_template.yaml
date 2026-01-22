@@ -5,12 +5,16 @@ base_model_path: "/mnt/share/weight/Qwen3-32B"
 # -----------------------------------------------
 workspace_base_dir: "workspace"
 workspace_current_run_dir: "current_run"
+<<<<<<< HEAD
 workspace_history_dir: "history"
+=======
+>>>>>>> eb406b9 (AQT合入)
 workspace_best_weights_dir: "best_weights"
 workspace_quant_config_name: "generated_modelslim_config.yaml"
 workspace_quant_weights_dir: "quantized_weights"
 
 # -----------------------------------------------
+<<<<<<< HEAD
 # 核心调优策略
 # -----------------------------------------------
 strategy_layer_pattern: "model.layers.{i}.mlp.down_proj"
@@ -80,18 +84,32 @@ strategy_initial_fallback_layers:
   - 'model.layers.61.mlp.down_proj'
   - 'model.layers.62.mlp.down_proj'
   - 'model.layers.63.mlp.down_proj'
+=======
+# 核心调优策略（仅无 AQT 时使用固定回退层）
+# -----------------------------------------------
+strategy_initial_fallback_layers:
+  - 'lm_head'
+>>>>>>> eb406b9 (AQT合入)
 
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
+<<<<<<< HEAD
 evaluation_tolerance_ratio: 1
+=======
+evaluation_tolerance_ratio: 1.0
+>>>>>>> eb406b9 (AQT合入)
 disable_qwen_thinking: true
 
 evaluation_datasets:
   ceval:
     config_name: "ceval_gen_5_shot_str"
     mode: "all"
+<<<<<<< HEAD
     target_accuracy: 50.0
+=======
+    target_accuracy: 81.87
+>>>>>>> eb406b9 (AQT合入)
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
@@ -127,7 +145,11 @@ aisbench_extra_args: null
 vllm_port: 1234
 vllm_env_vars:
   HCCL_BUFFSIZE: 1024
+<<<<<<< HEAD
   VLLM_VERSION: "0.11.0"
+=======
+  # VLLM_VERSION: "0.11.0"
+>>>>>>> eb406b9 (AQT合入)
   ASCEND_RT_VISIBLE_DEVICES: "0,1"
   # HCCL_OP_EXPANSION_MODE: "AIV"
 vllm_args:
@@ -148,12 +170,17 @@ vllm_args:
 # 量化器 (Modelslim) 配置
 # -----------------------------------------------
 quantization_visible_devices: "0,1,2,3"
+<<<<<<< HEAD
 quantization_model_type: "Qwen3-32B"
+=======
+quantization_model_type: "Qwen3-30B"
+>>>>>>> eb406b9 (AQT合入)
 quantization_device: "npu"
 quantization_trust_remote_code: true
 
 # Modelslim YAML 配置模板
 quantization_template_config:
+<<<<<<< HEAD
   apiversion: modelslim_v0
   metadata:
     config_id: qwen3-32b-dense-w8a8
@@ -170,3 +197,92 @@ quantization_template_config:
       pdmix: false
     calib_dataset: "mix_calib.jsonl"
     calib_save_params: { part_file_size: 4 }
+=======
+  w_bit: 8  # 权重量化位数
+  a_bit: 8  # 激活量化位数
+
+  v1:
+    metadata:
+      config_id: qwen3-dense-w8a8-v1
+      score: 90
+      label:
+        is_sparse: false
+        kv_cache: false
+
+    qconfigs:
+      default_w8a8_dynamic:
+        act:
+          scope: "per_token"      # 激活值量化范围: per_token 或 per_tensor
+          dtype: "int8"           # 数据类型: int8
+          symmetric: true         # 是否对称量化
+          method: "minmax"        # 量化方法: minmax
+        weight:
+          scope: "per_channel"    # 权重量化范围: per_channel 或 per_group
+          dtype: "int8"           # 数据类型: int8
+          symmetric: true         # 是否对称量化
+          method: "ssz"        # 量化方法: minmax, ssz
+
+      # w4a8量化配置（4bit权重，8bit激活）
+      default_w4a8_dynamic:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int4"
+          symmetric: true
+          method: "ssz"
+
+    # v1格式的process配置（定义量化策略组）
+    # 注意：include/exclude不需要配置，AQT会自动填充
+    process:
+      - type: "group"
+        configs:
+          - type: "linear_quant"
+            qconfig_ref: "default_w4a8_dynamic"  # 引用 w4a8 动态配置
+          - type: "linear_quant"
+            qconfig_ref: "default_w8a8_dynamic"  # 引用上面定义的qconfig锚点
+
+    save:
+      - type: "ascendv1_saver"
+        part_file_size: 4
+
+  # modelslim_v0 格式配置（legacy格式，非AQT场景使用，将来会被移除）
+  v0:
+    metadata:
+      config_id: qwen3-32b-dense-w8a8
+      score: 90
+      verified_model_types:
+        - Qwen3-30B
+      label:
+        is_sparse: false
+        kv_cache: false
+    spec:
+      calib_cfg:
+        mm_tensor: false
+        pdmix: false
+      calib_dataset: "mix_calib.jsonl"
+      calib_save_params:
+        part_file_size: 4
+
+# -----------------------------------------------
+# Automatic Quantization Tool (AQT)
+# 如果项目根目录存在 automatic-quantization-tool 且未显式关闭，将自动启用。
+# -----------------------------------------------
+aqt_enabled: true
+aqt_project_dir: "automatic-quantization-tool"
+aqt_quant_data_path: "/path/to/calib_data.txt"     # 必填：校准集路径
+aqt_quant_samples_num: 128
+aqt_quant_context_length: 4096
+aqt_sensitivity_metric: "mse"
+aqt_initial_budget_mb: 2500
+aqt_budget_step_mb: 500
+aqt_budget_step_down_mb: 250
+aqt_min_budget_mb: 0
+aqt_max_budget_mb: 12000
+aqt_results_dir: "workspace/aqt_results"
+aqt_omp_num_threads: 32
+aqt_ascend_visible_devices: "0"
+>>>>>>> eb406b9 (AQT合入)
