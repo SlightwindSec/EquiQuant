@@ -248,7 +248,7 @@ def fill_modelslim_yaml_template(
                 w4a8_cfg["exclude"].append(pattern)
                 w8a8_cfg["include"].append(pattern)
             else:
-                w8a8_cfg["exclude"].append(pattern)
+                w8a8_cfg[""].append(pattern)
 
     with open(template_path) as f:
         yaml_template_dict = yaml.safe_load(f)

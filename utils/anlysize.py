@@ -38,8 +38,6 @@ from utils.common import seed_everything
 from utils.sensitivity import (
     analyze_sensitivity_scores,
     get_layer_sensitivity_group_mapping,
-    update_quant_layer_cfg_greedy,
-    update_quant_layer_cfg_lp,
     show_diff_between_bits,
 )
 
@@ -373,25 +371,6 @@ def main() -> None:
                 sq_scales=sq_scales,
                 adapter=adapter,
             )
-        
-        if args.quant_cfg_updater == "greedy":
-            quant_cfg_updater_method = update_quant_layer_cfg_greedy
-        elif args.quant_cfg_updater == "lp":
-            quant_cfg_updater_method = update_quant_layer_cfg_lp
-        else:
-            raise NotImplementedError
-
-        metric = args.sensitivity_metric.split(",")[0]
-        quant_cfg_updater_method(
-            sensitivity_scores=sensitivity_scores,
-            model=model,
-            quant_layer_cfg_mngr=quant_layer_cfg_mngr,
-            score_name=metric,
-            ckpt_size_budget_mb=args.ckpt_size_budget_mb,
-        )
-        quant_layer_cfg_mngr.save_hybrid_quant_cfg(
-            pjoin(args.save_dir, "hybrid_quant_config.json")
-        )
 
 if __name__ == "__main__":
     main()
