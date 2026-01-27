@@ -43,6 +43,7 @@ def check_requirements():
         ("pip", "torch", "PyTorch Framework"),
         ("pip", "torch-npu", "PyTorch NPU Adapter"),
         ("pip", "ais-bench-benchmark", "AIS Bench Benchmark Tool"),
+        ("pip", "llmcompressor", "LLMCompressor Tool"),
     ]
     results = {}
     max_name_len = max(len(name) for _, name, _ in items_to_check)

@@ -108,10 +108,10 @@ class AisBencher:
                     # 如果文件解析失败，回退到日志解析
                     accuracy = self._parse_accuracy(stdout + "\n" + stderr, alias, dataset_cfg)
                     logger.warning(f"Failed to parse results from files for {alias}, using log parsing fallback.")
-                
+
                 logger.info(f"AISBench result for {alias}: {accuracy}")
                 results[alias] = accuracy
-                
+
                 # 保存解析的结果数据
                 if result_data:
                     self._save_result_data(alias, result_data)
@@ -327,18 +327,18 @@ class AisBencher:
         if not output_path:
             logger.debug(f"Could not extract output path from logs for {dataset_alias}")
             return None, None
-        
+
         if not os.path.exists(output_path):
             logger.warning(f"AISBench output path does not exist: {output_path}")
             return None, None
-        
+
         result_data = {
             'output_path': output_path,
             'summary': None,
             'results': None,
             'predictions': None
         }
-        
+
         # 解析 summary CSV 文件
         summary_data = self._parse_summary_csv(output_path, dataset_alias, dataset_cfg)
         if summary_data:
@@ -349,7 +349,7 @@ class AisBencher:
                 result_data['results'] = self._parse_results_json(output_path, dataset_alias, dataset_cfg)
                 result_data['predictions'] = self._parse_predictions_json(output_path, dataset_alias, dataset_cfg)
                 return accuracy, result_data
-        
+
         return None, None
 
     def _parse_summary_csv(self, output_path: str, dataset_alias: str, dataset_cfg: Dict) -> Optional[Dict]:
@@ -368,31 +368,31 @@ class AisBencher:
         if not os.path.exists(summary_dir):
             logger.warning(f"Summary directory not found: {summary_dir}")
             return None
-        
+
         # 查找 summary CSV 文件（格式：summary_YYYYMMDD_HHMMSS.csv）
         csv_files = list(Path(summary_dir).glob('summary_*.csv'))
         if not csv_files:
             logger.warning(f"No summary CSV file found in {summary_dir}")
             return None
-        
+
         # 使用最新的 CSV 文件
         csv_file = sorted(csv_files, key=lambda p: p.stat().st_mtime, reverse=True)[0]
-        
+
         try:
             with open(csv_file, 'r', encoding='utf-8') as f:
                 reader = csv.DictReader(f)
                 rows = list(reader)
-                
+
                 if not rows:
                     logger.warning(f"Summary CSV file is empty: {csv_file}")
                     return None
-                
+
                 # 查找匹配的数据集行
                 # CSV 格式: dataset,version,metric,mode,vllm-api-general
                 # 示例: cevaldataset,-,accuracy,gen,78.97
                 dataset_name = dataset_cfg.get('config_name', dataset_alias)
                 metric_keys = dataset_cfg.get('metric_keys', [])
-                
+
                 # 尝试匹配数据集名称（可能不完全匹配，需要模糊匹配）
                 matched_row = None
                 for row in rows:
@@ -403,15 +403,15 @@ class AisBencher:
                         dataset_alias.lower() in row_dataset):
                         matched_row = row
                         break
-                
+
                 # 如果没找到精确匹配，使用第一行（通常只有一个数据集）
                 if not matched_row and rows:
                     matched_row = rows[0]
-                
+
                 if not matched_row:
                     logger.warning(f"No matching dataset found in summary CSV for {dataset_alias}")
                     return None
-                
+
                 # 提取精度值
                 # CSV 的最后一列通常是精度值（列名可能是模型缩写，如 vllm-api-general）
                 accuracy = None
@@ -423,11 +423,11 @@ class AisBencher:
                         break
                     except (ValueError, TypeError):
                         continue
-                
+
                 if accuracy is None:
                     logger.warning(f"Could not extract accuracy from summary CSV row: {matched_row}")
                     return None
-                
+
                 return {
                     'csv_file': str(csv_file),
                     'dataset': matched_row.get('dataset', ''),
@@ -436,7 +436,7 @@ class AisBencher:
                     'accuracy': accuracy,
                     'raw_row': matched_row
                 }
-                
+
         except Exception as exc:
             logger.error(f"Failed to parse summary CSV file {csv_file}: {exc}")
             return None
@@ -457,7 +457,7 @@ class AisBencher:
         if not os.path.exists(results_dir):
             logger.debug(f"Results directory not found: {results_dir}")
             return None
-        
+
         # 查找 results JSON 文件
         # 路径格式: results/vllm-api-general-chat/dataset_name.json
         # 需要遍历子目录查找
@@ -466,15 +466,15 @@ class AisBencher:
             for file in files:
                 if file.endswith('.json'):
                     json_files.append(os.path.join(root, file))
-        
+
         if not json_files:
             logger.debug(f"No results JSON file found in {results_dir}")
             return None
-        
+
         # 尝试匹配数据集名称
         dataset_name = dataset_cfg.get('config_name', dataset_alias)
         matched_file = None
-        
+
         for json_file in json_files:
             file_name = os.path.basename(json_file).replace('.json', '').lower()
             if (dataset_name.lower() in file_name or 
@@ -482,14 +482,14 @@ class AisBencher:
                 dataset_alias.lower() in file_name):
                 matched_file = json_file
                 break
-        
+
         # 如果没找到匹配，使用第一个 JSON 文件
         if not matched_file and json_files:
             matched_file = json_files[0]
-        
+
         if not matched_file:
             return None
-        
+
         try:
             with open(matched_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -517,22 +517,22 @@ class AisBencher:
         if not os.path.exists(predictions_dir):
             logger.debug(f"Predictions directory not found: {predictions_dir}")
             return None
-        
+
         # 查找 predictions JSON 文件
         json_files = []
         for root, dirs, files in os.walk(predictions_dir):
             for file in files:
                 if file.endswith('.json'):
                     json_files.append(os.path.join(root, file))
-        
+
         if not json_files:
             logger.debug(f"No predictions JSON file found in {predictions_dir}")
             return None
-        
+
         # 尝试匹配数据集名称
         dataset_name = dataset_cfg.get('config_name', dataset_alias)
         matched_file = None
-        
+
         for json_file in json_files:
             file_name = os.path.basename(json_file).replace('.json', '').lower()
             if (dataset_name.lower() in file_name or 
@@ -540,14 +540,14 @@ class AisBencher:
                 dataset_alias.lower() in file_name):
                 matched_file = json_file
                 break
-        
+
         # 如果没找到匹配，使用第一个 JSON 文件
         if not matched_file and json_files:
             matched_file = json_files[0]
-        
+
         if not matched_file:
             return None
-        
+
         try:
             with open(matched_file, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -569,10 +569,10 @@ class AisBencher:
         """
         save_dir = os.path.join(self.current_run_dir, "aisbench_results", f"trial{self.run_id:03d}")
         os.makedirs(save_dir, exist_ok=True)
-        
+
         dataset_save_dir = os.path.join(save_dir, dataset_alias)
         os.makedirs(dataset_save_dir, exist_ok=True)
-        
+
         # 保存 summary 信息
         if result_data.get('summary'):
             summary_file = os.path.join(dataset_save_dir, 'summary.json')
@@ -582,7 +582,7 @@ class AisBencher:
                 logger.debug(f"Saved summary data to {summary_file}")
             except Exception as exc:
                 logger.warning(f"Failed to save summary data: {exc}")
-        
+
         # 保存 results JSON（原始分数）
         if result_data.get('results'):
             results_file = os.path.join(dataset_save_dir, 'results.json')
@@ -592,7 +592,7 @@ class AisBencher:
                 logger.debug(f"Saved results data to {results_file}")
             except Exception as exc:
                 logger.warning(f"Failed to save results data: {exc}")
-        
+
         # 保存 predictions JSON（推理结果，将来用于分析错题）
         if result_data.get('predictions'):
             predictions_file = os.path.join(dataset_save_dir, 'predictions.json')

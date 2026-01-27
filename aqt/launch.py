@@ -2,44 +2,56 @@ import os
 import copy
 import gc
 import json
+import yaml
 import argparse
 from argparse import Namespace
 from collections import defaultdict
 from itertools import chain
 from os.path import join as pjoin
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
+from utils.logger import logger
 
 import torch
 import torch_npu
 from torch import Tensor, nn
 
-from msmodelslim.model.deepseek_v3_2.model import ModelArgs
-from msmodelslim.model.deepseek_v3_2.model_adapter import DeepSeekV32ModelAdapter
 from msmodelslim.pytorch.llm_ptq.llm_ptq_tools import Calibrator, QuantConfig
 from msmodelslim.pytorch.llm_ptq.llm_ptq_tools.quant_modules import (
         Quantizer as MSQuantizer,
     )
 from transformers import AutoModelForCausalLM
 
-from utils.model import (
+from aqt.utils.model import (
     catch_model_cache,
     find_layers,
     get_linear_layers_classes,
 )
-from utils.minmax import MinMax
-from utils.modelslim import ModelslimQuantization
-from utils.ptq_method import PostTrainingQuantization
-from utils.quantizer import Quantizer
-from utils.quant_config_manager import QuantLayerConfigManager
-from utils.arguments import parse_args
+from aqt.minmax import MinMax
+from aqt.modelslim import ModelslimQuantization
+from aqt.ptq_method import PostTrainingQuantization
+from aqt.quantizer import Quantizer
+from aqt.utils.quant_config_manager import (
+    QuantLayerConfig,
+    QuantLayerConfigManager,
+    compress_hybrid_quant_schema,
+)
+from aqt.arguments import parse_args
 
-from utils.data import prepare_calibration_samples
-from utils.common import seed_everything
-from utils.sensitivity import (
+from aqt.utils.data import prepare_calibration_samples
+from aqt.utils.common import seed_everything
+from aqt.sensitivity import (
     analyze_sensitivity_scores,
     get_layer_sensitivity_group_mapping,
+    update_quant_layer_cfg_greedy,
+    update_quant_layer_cfg_lp,
     show_diff_between_bits,
+    get_subset_layer_names,
 )
+
+
+MEGABYTE_SIZE = 1024**2
+BYTES_PER_4BIT_PARAM = 0.5
+BYTES_PER_8BIT_PARAM = 1
 
 
 def _compute_sensitivity_scores(
@@ -48,23 +60,20 @@ def _compute_sensitivity_scores(
     quant_layer_cfg_mngr: QuantLayerConfigManager,
     ms_calibrator: Optional[Calibrator],
     calibration_samples: Tensor,
-    sq_scales: Dict[str, Tensor],
-    adapter: Optional[DeepSeekV32ModelAdapter],
 ) -> Dict[str, Dict]:
     # Note: This function is directly inherited from our quantization pipeline
     # where we usually use GPTQ as a weight quantizer. Once we decide to use
     # data-free only PTQ techniques to compute sensitivity scores, this code
     # can be significantly simplified and refactored.
-    print("Computing sensitivity scores...")
+    logger.info("Computing sensitivity scores...")
 
     samples_num = len(calibration_samples)
     model.eval()
     model.cpu()
 
     # TODO: add support for other types of architectures
-    if not args.is_deepseek_v3_2:
-        use_cache = model.config.use_cache
-        model.config.use_cache = False
+    use_cache = model.config.use_cache
+    model.config.use_cache = False
     layers = model.model.layers
 
     # collect inputs
@@ -102,10 +111,7 @@ def _compute_sensitivity_scores(
                 module.quant_weight.is_enable = False
                 module.quant_input.is_enable = False
 
-    if args.is_deepseek_v3_2:
-        layer_iterator = adapter.generate_decoder_layer(model)
-    else:
-        layer_iterator = enumerate(layers)
+    layer_iterator = enumerate(layers)
 
     for layer_idx, layer in layer_iterator:
         layer_idx = str(layer_idx).replace("model.layers.", "")
@@ -144,7 +150,6 @@ def _compute_sensitivity_scores(
                     quant_layer_cfg_mngr=quant_layer_cfg_mngr,
                     quant_bits=quant_bits,
                     sensitivity_metrics=sensitivity_metrics,
-                    sq_scales=sq_scales,
                     ms_calibrator=ms_calibrator,
                 )
 
@@ -179,20 +184,11 @@ def _compute_sensitivity_scores(
                 # computed but not fused with layernorm, weights weren't transformed.
                 # We need to do it here for quantization...
                 layer_name = f"model.layers.{layer_idx}.{name}"
-                sq_scale = sq_scales.get(layer_name, None)
-                if sq_scale is not None:
-                    print("Multiplying the weights with smooth scales...")
-                    module.weight.data.mul_(sq_scale.to(module.weight).view(1, -1))
 
                 losses = ptq[name].run(transform_weights=False)
                 sensitivity_scores[layer_name][quant_bits] = {
                     metric: losses[i] for i, metric in enumerate(sensitivity_metrics)
                 }
-
-                # ...and revert this transformation back
-                if sq_scale is not None:
-                    print("Reverting smooth scales on dequantized weights...")
-                    module.weight.data.div_(sq_scale.to(module.weight).view(1, -1))
 
                 ptq[name].free()
 
@@ -236,10 +232,9 @@ def _compute_sensitivity_scores(
     gc.collect()
     torch.npu.empty_cache()
 
-    if not args.is_deepseek_v3_2:
-        model.config.use_cache = use_cache
+    model.config.use_cache = use_cache
 
-    print("Sensitivity scores have been computed.")
+    logger.info("Sensitivity scores have been computed.")
 
     # sensitivity scores analysis
     if args.sensitivity_metric is not None:
@@ -274,7 +269,6 @@ def _get_ptq(
     quant_layer_cfg_mngr: QuantLayerConfigManager,
     quant_bits: int,
     sensitivity_metrics: List[str],
-    sq_scales: Dict[str, Tensor],
     ms_calibrator: Optional[Calibrator] = None,
 ) -> PostTrainingQuantization:
     if args.quant_type in ("minmax", "ssz"):
@@ -286,7 +280,6 @@ def _get_ptq(
                 perchannel=True,
                 sym=args.quant_sym,
             ),
-            sq_scales=sq_scales.get(layer_name, None),
             group_size=quant_layer_cfg_mngr.get_group_size(layer_name),
             context_length=args.quant_context_length,
             sensitivity_metric=sensitivity_metrics,
@@ -305,30 +298,106 @@ def _get_ptq(
     else:
         raise NotImplementedError
 
+
+def update_quant_layer_cfg(
+    sensitivity_scores: Dict[str, Dict[int, Any]],
+    model: nn.Module,
+    args: Namespace,
+    quant_layer_cfg_mngr: QuantLayerConfigManager,
+    score_name: str,
+    ckpt_size_budget_mb: int = 500,
+) -> None:
+    experts_num = getattr(model.config, "num_experts", 0)
+    layers_mapping = get_layer_sensitivity_group_mapping(experts_num)
+    layer_score_info = []
+    seen_layers = set()
+    for name, bit_mapping in sensitivity_scores.items():
+        if name not in quant_layer_cfg_mngr.cfg:
+            quant_layer_cfg_mngr.cfg[name] = QuantLayerConfig(
+                weight_bits=args.weight_quant_bits,
+                act_bits=args.act_quant_bits,
+                group_size=args.quant_group_size,
+            )
+
+        for layer_subset, layer_names in layers_mapping.items():
+            if not layer_names:
+                continue
+
+            if layer_names[0] in name and name not in seen_layers:
+                score = bit_mapping["ratio"][score_name]
+                layer_type = name.replace(layer_names[0], layer_subset)
+                layer_score_info.append((score, layer_type))
+
+                subset_names = get_subset_layer_names(
+                    subset_name=layer_type, layers_mapping=layers_mapping
+                )
+                for subset_name in subset_names:
+                    seen_layers.add(subset_name)
+
+    layer_score_info.sort(reverse=True)
+
+    curr_ckpt_diff = 0
+    layer_num = 0
+
+    # TODO: we consider only 4 vs 8 bit case here. Extend with fp16/bf16 later
+    ckpt_size_budget_mb = ckpt_size_budget_mb * MEGABYTE_SIZE
+    skipped = []
+    while curr_ckpt_diff < ckpt_size_budget_mb and layer_num < len(layer_score_info):
+        subset_name = layer_score_info[layer_num][1]
+        layer_num += 1
+        if "self_attn." in subset_name:
+            continue
+
+        bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
+
+        weight_size = 0
+        layer_names = get_subset_layer_names(subset_name, layers_mapping)
+        for layer_name in layer_names:
+            n_elements = sensitivity_scores[layer_name]["size"]
+            weight_size += n_elements * bit_mapping_cfg["bytes_per_param"]
+
+        if curr_ckpt_diff + weight_size <= ckpt_size_budget_mb:
+            curr_ckpt_diff += weight_size
+            for layer_name in layer_names:
+                quant_layer_cfg_mngr.cfg[layer_name].weight_bits = bit_mapping_cfg[
+                    "upper"
+                ]
+        else:
+            skipped.append(subset_name)
+
+    for subset_name in skipped:
+        layer_names = get_subset_layer_names(subset_name, layers_mapping)
+        bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
+        for layer_name in layer_names:
+            quant_layer_cfg_mngr.cfg[layer_name].weight_bits = bit_mapping_cfg["lower"]
+
+
+def _get_lower_upper_bit_type(subset_name: str) -> Dict[str, Union[int, float]]:
+    if "experts" in subset_name:
+        return {"lower": 4, "upper": 8, "bytes_per_param": 0.5}
+    else:
+        return {"lower": 8, "upper": 8, "bytes_per_param": 1}
+
+
 def main() -> None:
     args = parse_args()
-    print(args.__dict__)
 
-    if args.is_deepseek_v3_2:
-        model_type = "DeepSeek-V3.2-Exp"
-        adapter = DeepSeekV32ModelAdapter(model_path=args.model_name_or_path, model_type=model_type)
-        model = adapter.init_model(device="cpu")
-        model.config = adapter._load_config()
-        model.config.num_experts = model.config.n_routed_experts
-        model.dtype = torch.bfloat16
-        model.device = torch.device("cpu")
-    else:
-        model = AutoModelForCausalLM.from_pretrained(
-            args.model_name_or_path,
-            trust_remote_code=True,
-            torch_dtype="auto",
-            device_map="cpu",
-            local_files_only=True,
-        )
-        adapter = None
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model_name_or_path,
+        trust_remote_code=True,
+        torch_dtype="auto",
+        device_map="cpu",
+        local_files_only=True,
+    )
+    count = 0
+    for name, module in model.named_modules():
+        if count < 5:
+            logger.info(f"name: {name}, module: {module}")
+        count += 1
 
     seed_everything(args.seed)
     calibration_samples = prepare_calibration_samples(args=args)
+    logger.info("prepare calibration samples successfully!")
 
     disable_names = []
     # for ids in range(model.config.num_hidden_layers):
@@ -357,20 +426,55 @@ def main() -> None:
         mix_cfg=None,
     )
     
-    quant_layer_cfg_mngr = QuantLayerConfigManager(args=args,model=model)
+    quant_layer_cfg_mngr = QuantLayerConfigManager(args=args, model=model)
 
     with torch.no_grad():
-        sq_scales: Dict[str, Tensor] = {}
         seed_everything(args.seed)
         sensitivity_scores = _compute_sensitivity_scores(
-                model=model,
-                quant_layer_cfg_mngr=quant_layer_cfg_mngr,
-                ms_calibrator=ms_calibrator,
-                args=args,
-                calibration_samples=calibration_samples,
-                sq_scales=sq_scales,
-                adapter=adapter,
-            )
+            model=model,
+            quant_layer_cfg_mngr=quant_layer_cfg_mngr,
+            ms_calibrator=ms_calibrator,
+            args=args,
+            calibration_samples=calibration_samples,
+        )
+        # if args.quant_cfg_updater == "greedy":
+        #     quant_cfg_updater_method = update_quant_layer_cfg_greedy
+        # elif args.quant_cfg_updater == "lp":
+        #     quant_cfg_updater_method = update_quant_layer_cfg_lp
+        # else:
+        #     raise NotImplementedError
+
+        # metric = args.sensitivity_metric.split(",")[0]
+        # quant_cfg_updater_method(
+        #     sensitivity_scores=sensitivity_scores,
+        #     model=model,
+        #     quant_layer_cfg_mngr=quant_layer_cfg_mngr,
+        #     score_name=metric,
+        #     ckpt_size_budget_mb=args.ckpt_size_budget_mb,
+        # )
+        # quant_layer_cfg_mngr.save_hybrid_quant_cfg(
+        #     pjoin(args.save_dir, "hybrid_quant_config.json")
+        # )
+
+    update_quant_layer_cfg(
+        sensitivity_scores=sensitivity_scores,
+        model=model,
+        args=args,
+        quant_layer_cfg_mngr=quant_layer_cfg_mngr,
+        score_name=args.sensitivity_metric.split(".")[0],
+        ckpt_size_budget_mb=args.ckpt_size_budget_mb,
+    )
+    layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping(
+        overwrite_act_to_8bit=False
+    )
+    hybrid_quant_schema = compress_hybrid_quant_schema(
+        cfg=layers_quant_mapping, experts_num=quant_layer_cfg_mngr.experts_num
+    )
+    
+    with open(pjoin(args.save_dir, "hybrid_quant_schema.json"), "w", encoding="utf-8") as f:
+        print("Saving hybrid quant config...")
+        json.dump(hybrid_quant_schema, f, indent=4)
+
 
 if __name__ == "__main__":
     main()

@@ -5,10 +5,11 @@ from argparse import Namespace
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List
+from utils.logger import logger
 
 from torch import nn
 
-from utils.model import get_linear_layers_classes
+from aqt.utils.model import get_linear_layers_classes
 
 
 @dataclass
@@ -39,10 +40,17 @@ class QuantLayerConfigManager:
         model: nn.Module,
     ) -> Dict[str, QuantLayerConfig]:
         cfg = {}
+        count = 0
         for name, module in model.named_modules():
+
             self.update_hybrid_quant_config(
                 args=args, name=name, module=module, cfg=cfg
             )
+            if count < 10:
+                logger.info(f"name: {name}, module: {module}")
+                if name in cfg.keys():
+                    logger.info(f"name: {name}, quant: {cfg[name]}")
+            count += 1
 
         return cfg
 
@@ -71,8 +79,8 @@ class QuantLayerConfigManager:
                 act_bits = 16
                 group_size = 0
             else:
-                weight_bits = args.weight_quant_bits
-                act_bits = args.act_quant_bits
+                weight_bits = 8 if "self_attn." in name else args.weight_quant_bits
+                act_bits = 8
                 group_size = args.quant_group_size
 
             cfg[name] = QuantLayerConfig(
@@ -90,6 +98,17 @@ class QuantLayerConfigManager:
 
     def get_group_size(self, name: str) -> int:
         return self.cfg[name].group_size
+    
+    def save_hybrid_quant_cfg(
+        self, save_path: str, overwrite_act_to_8bit: bool = False
+    ) -> None:
+        layers_quant_mapping = self._create_quant_layers_mapping(overwrite_act_to_8bit)
+        output = compress_hybrid_quant_schema(
+            cfg=layers_quant_mapping, experts_num=self.experts_num
+        )
+        with open(save_path, "w", encoding="utf-8") as f:
+            print("Saving hybrid quant config...")
+            json.dump(output, f, indent=4)
 
     def _create_quant_layers_mapping(
         self, overwrite_act_to_8bit: bool = False
@@ -250,6 +269,7 @@ TRANSFORMER_LAYER_PATTERNS = [
     "model.layers.*.mlp.shared_expert.up_proj",
     "model.layers.*.mlp.shared_expert.gate_proj",
     "model.layers.*.mlp.shared_expert.down_proj",
+    # "model.layers.*.mlp.experts.*",
     "model.layers.*.mlp.experts.*.up_proj",
     "model.layers.*.mlp.experts.*.gate_proj",
     "model.layers.*.mlp.experts.*.down_proj",
