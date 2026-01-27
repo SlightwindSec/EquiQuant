@@ -29,6 +29,16 @@ def flow_style_representer(dumper, data):
 yaml.add_representer(FlowStyleList, flow_style_representer)
 
 
+SUPPORTED_QUANTIZERS = ['msmodelslim', 'llmcompressor']
+
+SUPPORTED_QUANTIZATION_SCHEMAS = [
+    'w8a8_dynamic',
+    'w4a8_dynamic_pergroup',
+    'w4a8_dynamic_perchannel',
+]
+
+
+
 class BaseQuantizer(abc.ABC):
     """
     封装 量化器。
@@ -66,6 +76,43 @@ class BaseQuantizer(abc.ABC):
 
     def run(self):
         pass
+
+    def _get_quant_config(self):
+        with open(self.hybrid_quant_schema_path) as f:
+            hybrid_quant_schema = json.load(f)
+        w4a8_perchannel_cfg = defaultdict(FlowStyleList)
+        w4a8_pergroup_cfg = defaultdict(FlowStyleList)
+        w8a8_cfg = defaultdict(FlowStyleList)
+
+        for pattern, quant_schema in hybrid_quant_schema.items():
+            if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
+                raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
+
+            if pattern in TRANSFORMER_LAYER_PATTERNS:
+                if quant_schema == "w4a8_dynamic_pergroup":
+                    w4a8_pergroup_cfg["include"].append(pattern)
+                elif quant_schema == "w8a8_dynamic":
+                    w8a8_cfg["include"].append(pattern)
+                elif quant_schema == "w4a8_dynamic_perchannel":
+                    raise ValueError(f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel.")
+            else:
+                if ".mlp.experts.*" in pattern:
+                    if quant_schema == "w8a8_dynamic":
+                        if "layers.*.mlp.experts" not in pattern:
+                            w4a8_perchannel_cfg["exclude"].append(pattern)
+                        w8a8_cfg["include"].append(pattern)
+                    elif quant_schema == "w4a8_dynamic_perchannel":
+                        if "layers.*.mlp.experts" not in pattern:
+                            w8a8_cfg["exclude"].append(pattern)
+                        w4a8_perchannel_cfg["include"].append(pattern)
+                else:
+                    if quant_schema == "w8a8_dynamic":
+                        w8a8_cfg["include"].append(pattern)
+                        w4a8_pergroup_cfg["exclude"].append(pattern)
+                    elif quant_schema == "w4a8_dynamic_pergroup":
+                        w4a8_pergroup_cfg["include"].append(pattern)
+                        w8a8_cfg["exclude"].append(pattern)
+        return w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg
 
 
 class ModelslimQuantizer(BaseQuantizer):
@@ -119,7 +166,7 @@ class ModelslimQuantizer(BaseQuantizer):
             # metadata部分
             metadata = CommentedMap()
             v1_metadata = v1_config.get('metadata', {})
-            metadata['config_id'] = v1_metadata.get('config_id', 'qwen3-dense-w8a8-v1')
+            metadata['config_id'] = v1_metadata.get('config_id', 'qwen3-w4a8-v1')
             metadata['score'] = v1_metadata.get('score', 90)
             verified_model_types = v1_metadata.get('verified_model_types')
             if verified_model_types:
@@ -129,7 +176,7 @@ class ModelslimQuantizer(BaseQuantizer):
 
             # label部分
             label = CommentedMap()
-            w_bit = self.config.get('w_bit', 8)
+            w_bit = self.config.get('w_bit', 4)
             a_bit = self.config.get('a_bit', 8)
             label['w_bit'] = w_bit
             label['a_bit'] = a_bit
@@ -166,7 +213,9 @@ class ModelslimQuantizer(BaseQuantizer):
                 qconfig_nodes[name] = qconfig
                 root[name] = qconfig
 
-            # 如果没有配置v1_qconfigs，根据w_bit和a_bit生成默认配置（同时补齐 w8a8 和 w4a8 两套）
+            # 如果没有配置v1_qconfigs，根据w_bit和a_bit生成默认配置
+            # moe：w4a8_dynamic_perchannel / w8a8_dynamic
+            # linear: w4a8_dynamic_pergroup / w8a8_dynamic
             if not v1_qconfigs:
                 _add_qconfig(
                     'default_w8a8_dynamic',
@@ -174,7 +223,12 @@ class ModelslimQuantizer(BaseQuantizer):
                     {'scope': 'per_channel', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
                 )
                 _add_qconfig(
-                    'default_w4a8_dynamic',
+                    'default_w4a8_dynamic_perchannel',
+                    {'scope': 'per_token', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
+                    {'scope': 'per_channel', 'dtype': 'int4', 'symmetric': True, 'method': 'minmax'},
+                )
+                _add_qconfig(
+                    'default_w4a8_dynamic_pergroup',
                     {'scope': 'per_token', 'dtype': 'int8', 'symmetric': True, 'method': 'minmax'},
                     {'scope': 'per_group', 'dtype': 'int4', 'symmetric': True, 'method': 'minmax', 'ext': {'group_size': 64}},
                 )
@@ -187,11 +241,8 @@ class ModelslimQuantizer(BaseQuantizer):
                         qconfig_template.get('weight', {}),
                     )
 
-            # 根据w_bit选择合适的默认qconfig名称（用于process配置中），如果不存在则使用第一个
-            if w_bit == 4:
-                default_qconfig_name = 'default_w4a8_dynamic'
-            else:
-                default_qconfig_name = 'default_w8a8_dynamic'
+            # 默认采用高精度
+            default_qconfig_name = 'default_w8a8_dynamic'
 
             if default_qconfig_name not in qconfig_nodes and qconfig_nodes:
                 default_qconfig_name = list(qconfig_nodes.keys())[0]
@@ -216,7 +267,9 @@ class ModelslimQuantizer(BaseQuantizer):
                     configs.append(linear_quant)
 
                 # 默认情况下优先输出 w4a8 -> w8a8 的顺序，如果存在的话
-                preferred_order = ['default_w4a8_dynamic', 'default_w8a8_dynamic']
+                preferred_order = ['default_w4a8_dynamic_perchannel',
+                                   'default_w4a8_dynamic_pergroup',
+                                   'default_w8a8_dynamic']
                 existing_order = [name for name in preferred_order if name in qconfig_nodes]
                 if not existing_order:
                     existing_order = list(qconfig_nodes.keys())
@@ -280,40 +333,23 @@ class ModelslimQuantizer(BaseQuantizer):
     # FIXME: modelslim yaml 填充bug
     def _fill_modelslim_yaml(self) -> None:
         with open(self.output_config_path) as f:
-            base = yaml.safe_load(f)      
-        with open(self.hybrid_quant_schema_path) as f:
-            hybrid_quant_schema = json.load(f)
-        w4a8_cfg = defaultdict(FlowStyleList)
-        w8a8_cfg = defaultdict(FlowStyleList)
-
-        for pattern, quant_schema in hybrid_quant_schema.items():
-            if pattern in TRANSFORMER_LAYER_PATTERNS:
-                if quant_schema.startswith("w4"):
-                    w4a8_cfg["include"].append(pattern)
-                elif quant_schema.startswith("w8"):
-                    w8a8_cfg["include"].append(pattern)
-            else:
-                if quant_schema.startswith("w4"):
-                    w4a8_cfg["include"].append(pattern)
-                    if "layers.*.mlp.experts" not in pattern:
-                        w8a8_cfg["exclude"].append(pattern)
-                elif quant_schema.startswith("w8"):
-                    if "layers.*.mlp.experts" not in pattern:
-                        w4a8_cfg["exclude"].append(pattern)
-                    w8a8_cfg["include"].append(pattern)
-                else:
-                    w8a8_cfg["exclude"].append(pattern)
-
+            base = yaml.safe_load(f)
+    
+        w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg = self._get_quant_config()
         anchor_mapping = {}
         for process in base["spec"]["process"]:
             if process["type"] == "group":
                 for config in process["configs"]:
                     if config["qconfig"]["weight"]["dtype"] == "int4":
-                        config.update(w4a8_cfg)
-                        anchor_mapping["default_w8a8_dynamic"] = id(config)
+                        if config["qconfig"]["weight"]["scope"] == "per_group":
+                            config.update(w4a8_pergroup_cfg)
+                            anchor_mapping["default_w4a8_dynamic_pergroup"] = id(config)
+                        elif config["qconfig"]["weight"]["scope"] == "per_channel":
+                            config.update(w4a8_perchannel_cfg)
+                            anchor_mapping["default_w4a8_dynamic_perchannel"] = id(config)
                     elif config["qconfig"]["weight"]["dtype"] == "int8":
                         config.update(w8a8_cfg)
-                        anchor_mapping["default_w4a8_dynamic"] = id(config)
+                        anchor_mapping["default_w8a8_dynamic"] = id(config)
 
         with open(self.output_config_path, "w") as f:
             yaml.dump(base, f, default_flow_style=False, sort_keys=False)
@@ -371,29 +407,11 @@ class LLMCompressorQuantizer(BaseQuantizer):
     '''
 
     def _generate_llmcompressor_config(self) -> None:
-        with open(self.hybrid_quant_schema_path) as f:
-            hybrid_quant_schema = json.load(f)
-        targets = {
-            'w8a8_dynamic': [],
-            'w4a8_dynamic': [],
-        }
-        for pattern, quant_schema in hybrid_quant_schema.items():
-                if pattern in TRANSFORMER_LAYER_PATTERNS:
-                    if quant_schema.startswith("w4"):
-                        targets["w4a8_dynamic"].append(pattern)
-                    elif quant_schema.startswith("w8"):
-                        targets["w8a8_dynamic"].append(pattern)
-                else:
-                    if quant_schema.startswith("w4"):
-                        targets["w4a8_dynamic"].append(pattern)
-                    elif quant_schema.startswith("w8"):
-                        targets["w8a8_dynamic"].append(pattern)
-                    else:
-                        targets["w8a8_dynamic"].append(pattern)
-        # FIXME: quant_schema 添加进脚本中 / 校准集加载逻辑修改
-        quant_schema = {
-            "w8a8_dynamic": {
-                "targets": targets["w8a8_dynamic"],
+        w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg = self._get_quant_config()
+
+        w8a8_dynamic = {
+            "group_0": {
+                "targets": w8a8_cfg["include"],
                 "weights": {
                     "num_bits": 8,
                     "type": "QuantizationType.INT",
@@ -409,8 +427,29 @@ class LLMCompressorQuantizer(BaseQuantizer):
                     "dynamic": True
                 },
             },
-            "w4a8_dynamic": {
-                "targets": targets["w4a8_dynamic"],
+        }
+        w4a8_dynamic_perchannel = {
+            "w4a8_dynamic_perchannel": {
+                "targets": w4a8_perchannel_cfg["include"],
+                "weights": {
+                    "num_bits": 4,
+                    "type": "QuantizationType.INT",
+                    "strategy": "QuantizationStrategy.CHANNEL",
+                    "symmetric": True,
+                    "dynamic": False,
+                },
+                "input_activations": {
+                    "num_bits": 8,
+                    "type": "QuantizationType.INT",
+                    "strategy": "QuantizationStrategy.TOKEN",
+                    "symmetric": True,
+                    "dynamic": True
+                },
+            },
+        }
+        w4a8_dynamic_pergroup = {
+            "group_0": {
+                "targets": w4a8_pergroup_cfg["include"],
                 "weights": {
                     "num_bits": 4,
                     "type": "QuantizationType.INT",
@@ -510,7 +549,15 @@ class LLMCompressorQuantizer(BaseQuantizer):
             script_lines.append(f"    SmoothQuantModifier(smoothing_strength={self.config['smoothing_strength']}),")
         script_lines.extend([
             f"    {modifier_map[self.config['modifier']]}(",
-            "        config_groups=quant_schema,",
+            "        config_groups=w8a8_dynamic,",
+            "        ignore=ignore,",
+            "    ),",
+            f"    {modifier_map[self.config['modifier']]}(",
+            "        config_groups=w4a8_dynamic_perchannel,",
+            "        ignore=ignore,",
+            "    ),",
+            f"    {modifier_map[self.config['modifier']]}(",
+            "        config_groups=w4a8_dynamic_pergroup,",
             "        ignore=ignore,",
             "    ),",
             "]",
@@ -538,17 +585,18 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "    model=model,",
                 "    recipe=recipe,",
                 "    tokenizer=tokenizer,",
+                "    trust_remote_code_model=True,",
                 f"    output_dir={repr(self.output_weights_path)}"
                 ")",
                 "",
                 "",
             ])
         
-        script_lines.extend([
-            f"SAVE_DIR = {repr(self.output_weights_path)}",
-            "model.save_pretrained(SAVE_DIR, save_compressed=True)",
-            "tokenizer.save_pretrained(SAVE_DIR)",
-        ])
+        # script_lines.extend([
+        #     f"SAVE_DIR = {repr(self.output_weights_path)}",
+        #     "model.save_pretrained(SAVE_DIR, save_compressed=True)",
+        #     "tokenizer.save_pretrained(SAVE_DIR)",
+        # ])
 
         final_script = "\n".join(script_lines)
         

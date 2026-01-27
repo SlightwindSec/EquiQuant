@@ -312,12 +312,12 @@ def update_quant_layer_cfg(
     layer_score_info = []
     seen_layers = set()
     for name, bit_mapping in sensitivity_scores.items():
-        if name not in quant_layer_cfg_mngr.cfg:
-            quant_layer_cfg_mngr.cfg[name] = QuantLayerConfig(
-                weight_bits=args.weight_quant_bits,
-                act_bits=args.act_quant_bits,
-                group_size=args.quant_group_size,
-            )
+        # if name not in quant_layer_cfg_mngr.cfg:
+        #     quant_layer_cfg_mngr.cfg[name] = QuantLayerConfig(
+        #         weight_bits=args.weight_quant_bits,
+        #         act_bits=args.act_quant_bits,
+        #         group_size=args.quant_group_size,
+        #     )
 
         for layer_subset, layer_names in layers_mapping.items():
             if not layer_names:
@@ -338,6 +338,7 @@ def update_quant_layer_cfg(
 
     curr_ckpt_diff = 0
     layer_num = 0
+    bit_mapping_cfg = {"lower": 4, "upper": 8, "bytes_per_param": 0.5}
 
     # TODO: we consider only 4 vs 8 bit case here. Extend with fp16/bf16 later
     ckpt_size_budget_mb = ckpt_size_budget_mb * MEGABYTE_SIZE
@@ -348,7 +349,7 @@ def update_quant_layer_cfg(
         if "self_attn." in subset_name:
             continue
 
-        bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
+        # bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
 
         weight_size = 0
         layer_names = get_subset_layer_names(subset_name, layers_mapping)
@@ -367,16 +368,13 @@ def update_quant_layer_cfg(
 
     for subset_name in skipped:
         layer_names = get_subset_layer_names(subset_name, layers_mapping)
-        bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
+        # bit_mapping_cfg = _get_lower_upper_bit_type(subset_name)
         for layer_name in layer_names:
             quant_layer_cfg_mngr.cfg[layer_name].weight_bits = bit_mapping_cfg["lower"]
 
 
 def _get_lower_upper_bit_type(subset_name: str) -> Dict[str, Union[int, float]]:
-    if "experts" in subset_name:
-        return {"lower": 4, "upper": 8, "bytes_per_param": 0.5}
-    else:
-        return {"lower": 8, "upper": 8, "bytes_per_param": 1}
+    return {"lower": 4, "upper": 8, "bytes_per_param": 0.5}
 
 
 def main() -> None:

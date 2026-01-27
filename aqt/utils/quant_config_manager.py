@@ -79,9 +79,10 @@ class QuantLayerConfigManager:
                 act_bits = 16
                 group_size = 0
             else:
-                weight_bits = 8 if "self_attn." in name else args.weight_quant_bits
+                # FIXME: 硬编码修改
+                weight_bits = 4
                 act_bits = 8
-                group_size = args.quant_group_size
+                group_size = 0 if ".mlp.experts." in name else 64
 
             cfg[name] = QuantLayerConfig(
                 weight_bits=weight_bits,
@@ -130,7 +131,10 @@ class QuantLayerConfigManager:
             elif layer_cfg.weight_bits == 8 and layer_cfg.act_bits == 8:
                 layers_quant_mapping[layer_name] = "w8a8_dynamic"
             elif layer_cfg.weight_bits == 4 and layer_cfg.act_bits == 8:
-                layers_quant_mapping[layer_name] = "w4a8_dynamic"
+                if layer_cfg.group_size == 0:
+                    layers_quant_mapping[layer_name] = "w4a8_dynamic_perchannel"
+                else:
+                    layers_quant_mapping[layer_name] = "w4a8_dynamic_pergroup"
             elif layer_cfg.weight_bits == 4 and layer_cfg.act_bits == 4:
                 layers_quant_mapping[layer_name] = "w4a4_flatquant_dynamic"
             else:

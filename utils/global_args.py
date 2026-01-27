@@ -77,7 +77,7 @@ class GlobalConfig:
         if quantization_tool == "msmodelslim":
             # 优先从quantization_template_config中读取w_bit/a_bit，如果没有则从旧字段读取
             quant_template = cfg.get('quantization_template_config') or {}
-            w_bit = quant_template.get('w_bit') or cfg.get('quantization_w_bit', 8)
+            w_bit = quant_template.get('w_bit') or cfg.get('quantization_w_bit', 4)
             a_bit = quant_template.get('a_bit') or cfg.get('quantization_a_bit', 8)
 
             normalized['quantization'] = {

@@ -65,7 +65,7 @@ vllm_env_vars:
   # HCCL_OP_EXPANSION_MODE: "AIV"
 vllm_args:
   trust-remote-code: true
-  tensor-parallel-size: 1
+  tensor-parallel-size: 2
   data-parallel-size: 1
 
   # quantization: "ascend"
@@ -121,12 +121,12 @@ quantization_trust_remote_code: true
 
 # Modelslim YAML 配置模板
 quantization_template_config:
-  w_bit: 8  # 权重量化位数
+  w_bit: 4  # 权重量化位数
   a_bit: 8  # 激活量化位数
 
   v1:
     metadata:
-      config_id: qwen3-dense-w8a8-v1
+      config_id: qwen3-w4a8-v1
       score: 90
       label:
         is_sparse: false
@@ -146,7 +146,7 @@ quantization_template_config:
           method: "ssz"        # 量化方法: minmax, ssz
 
       # w4a8量化配置（4bit权重，8bit激活）
-      default_w4a8_dynamic:
+      default_w4a8_dynamic_perchannel:
         act:
           scope: "per_token"
           dtype: "int8"
@@ -158,13 +158,28 @@ quantization_template_config:
           symmetric: true
           method: "ssz"
 
+      default_w4a8_dynamic_pergroup:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_group"
+          dtype: "int4"
+          symmetric: true
+          method: "ssz"
+          ext:
+            group_size: 64
     # v1格式的process配置（定义量化策略组）
     # 注意：include/exclude不需要配置，AQT会自动填充
     process:
       - type: "group"
         configs:
           - type: "linear_quant"
-            qconfig_ref: "default_w4a8_dynamic"  # 引用 w4a8 动态配置
+            qconfig_ref: "default_w4a8_dynamic_perchannel"  # 引用 w4a8 动态配置
+          - type: "linear_quant"
+            qconfig_ref: "default_w4a8_dynamic_pergroup"
           - type: "linear_quant"
             qconfig_ref: "default_w8a8_dynamic"  # 引用上面定义的qconfig锚点
 
@@ -175,7 +190,7 @@ quantization_template_config:
   # modelslim_v0 格式配置（legacy格式，非AQT场景使用，将来会被移除）
   v0:
     metadata:
-      config_id: qwen3-32b-dense-w8a8
+      config_id: qwen3-w4a8-v0
       score: 90
       verified_model_types:
         - Qwen3-30B
