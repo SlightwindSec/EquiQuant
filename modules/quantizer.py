@@ -78,40 +78,46 @@ class BaseQuantizer(abc.ABC):
         pass
 
     def _get_quant_config(self):
+        if not os.path.exists(self.hybrid_quant_schema_path):
+            raise FileNotFoundError(f"Hybrid quant schema file not found: {self.hybrid_quant_schema_path}")
+
         with open(self.hybrid_quant_schema_path) as f:
             hybrid_quant_schema = json.load(f)
+
         w4a8_perchannel_cfg = defaultdict(FlowStyleList)
         w4a8_pergroup_cfg = defaultdict(FlowStyleList)
         w8a8_cfg = defaultdict(FlowStyleList)
 
-        for pattern, quant_schema in hybrid_quant_schema.items():
-            if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
-                raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
+        if hybrid_quant_schema:
+            for pattern, quant_schema in hybrid_quant_schema.items():
+                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
+                    raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
 
-            if pattern in TRANSFORMER_LAYER_PATTERNS:
-                if quant_schema == "w4a8_dynamic_pergroup":
-                    w4a8_pergroup_cfg["include"].append(pattern)
-                elif quant_schema == "w8a8_dynamic":
-                    w8a8_cfg["include"].append(pattern)
-                elif quant_schema == "w4a8_dynamic_perchannel":
-                    raise ValueError(f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel.")
-            else:
-                if ".mlp.experts.*" in pattern:
-                    if quant_schema == "w8a8_dynamic":
-                        if "layers.*.mlp.experts" not in pattern:
-                            w4a8_perchannel_cfg["exclude"].append(pattern)
+                if pattern in TRANSFORMER_LAYER_PATTERNS:
+                    if quant_schema == "w4a8_dynamic_pergroup":
+                        w4a8_pergroup_cfg["include"].append(pattern)
+                    elif quant_schema == "w8a8_dynamic":
                         w8a8_cfg["include"].append(pattern)
                     elif quant_schema == "w4a8_dynamic_perchannel":
-                        if "layers.*.mlp.experts" not in pattern:
-                            w8a8_cfg["exclude"].append(pattern)
-                        w4a8_perchannel_cfg["include"].append(pattern)
+                        raise ValueError(f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel.")
                 else:
-                    if quant_schema == "w8a8_dynamic":
-                        w8a8_cfg["include"].append(pattern)
-                        w4a8_pergroup_cfg["exclude"].append(pattern)
-                    elif quant_schema == "w4a8_dynamic_pergroup":
-                        w4a8_pergroup_cfg["include"].append(pattern)
-                        w8a8_cfg["exclude"].append(pattern)
+                    if ".mlp.experts.*" in pattern:
+                        if quant_schema == "w8a8_dynamic":
+                            if "layers.*.mlp.experts" not in pattern:
+                                w4a8_perchannel_cfg["exclude"].append(pattern)
+                            w8a8_cfg["include"].append(pattern)
+                        elif quant_schema == "w4a8_dynamic_perchannel":
+                            if "layers.*.mlp.experts" not in pattern:
+                                w8a8_cfg["exclude"].append(pattern)
+                            w4a8_perchannel_cfg["include"].append(pattern)
+                    else:
+                        if quant_schema == "w8a8_dynamic":
+                            w8a8_cfg["include"].append(pattern)
+                            w4a8_pergroup_cfg["exclude"].append(pattern)
+                        elif quant_schema == "w4a8_dynamic_pergroup":
+                            w4a8_pergroup_cfg["include"].append(pattern)
+                            w8a8_cfg["exclude"].append(pattern)
+
         return w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg
 
 
@@ -406,12 +412,53 @@ class LLMCompressorQuantizer(BaseQuantizer):
     封装 LLMCompressor 量化工具。
     '''
 
+    def _format_dict(self, d: dict, indent: int = 0) -> str:
+        """Format dictionary for clean Python code generation."""
+        lines = ["{"]
+        indent_str = "    " * (indent + 1)
+        
+        for key, value in d.items():
+            if isinstance(value, dict):
+                formatted_value = self._format_dict(value, indent + 1)
+                lines.append(f"{indent_str}{repr(key)}: {formatted_value},")
+            elif isinstance(value, list):
+                if all(isinstance(item, str) for item in value):
+                    lines.append(f"{indent_str}{repr(key)}: {repr(value)},")
+                else:
+                    lines.append(f"{indent_str}{repr(key)}: [")
+                    for item in value:
+                        lines.append(f"{indent_str}    {repr(item)},")
+                    lines.append(f"{indent_str}],")
+            else:
+                lines.append(f"{indent_str}{repr(key)}: {repr(value)},")
+        
+        lines.append("    " * indent + "}")
+        return "\n".join(lines)
+
     def _generate_llmcompressor_config(self) -> None:
         w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg = self._get_quant_config()
 
+        def add_regex_prefix(patterns):
+            result = []
+            for pattern in patterns:
+                if isinstance(pattern, str) and not pattern.startswith('re:'):
+                    result.append(f're:{pattern}')
+                else:
+                    result.append(pattern)
+            return result
+
+        w8a8_cfg['include'] = add_regex_prefix(w8a8_cfg.get('include', []))
+        w8a8_cfg['exclude'] = add_regex_prefix(w8a8_cfg.get('exclude', []))
+        
+        w4a8_perchannel_cfg['include'] = add_regex_prefix(w4a8_perchannel_cfg.get('include', []))
+        w4a8_perchannel_cfg['exclude'] = add_regex_prefix(w4a8_perchannel_cfg.get('exclude', []))
+        
+        w4a8_pergroup_cfg['include'] = add_regex_prefix(w4a8_pergroup_cfg.get('include', []))
+        w4a8_pergroup_cfg['exclude'] = add_regex_prefix(w4a8_pergroup_cfg.get('exclude', []))
+
         w8a8_dynamic = {
             "group_0": {
-                "targets": w8a8_cfg["include"],
+                "targets": w8a8_cfg.get("include", []),
                 "weights": {
                     "num_bits": 8,
                     "type": "QuantizationType.INT",
@@ -429,8 +476,8 @@ class LLMCompressorQuantizer(BaseQuantizer):
             },
         }
         w4a8_dynamic_perchannel = {
-            "w4a8_dynamic_perchannel": {
-                "targets": w4a8_perchannel_cfg["include"],
+            "group_0": {
+                "targets": w4a8_perchannel_cfg.get("include", []),
                 "weights": {
                     "num_bits": 4,
                     "type": "QuantizationType.INT",
@@ -449,7 +496,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
         }
         w4a8_dynamic_pergroup = {
             "group_0": {
-                "targets": w4a8_pergroup_cfg["include"],
+                "targets": w4a8_pergroup_cfg.get("include", []),
                 "weights": {
                     "num_bits": 4,
                     "type": "QuantizationType.INT",
@@ -468,18 +515,24 @@ class LLMCompressorQuantizer(BaseQuantizer):
             },
         }
 
+        default_ignores = ['lm_head', 're:.*mlp.gate$', 'model.embed_tokens', 're:.*mlp.shared_expert_gate$']
+
+        w8a8_ignores = sorted(list(set(w8a8_cfg.get("exclude", []) + default_ignores)))
+        w4a8_perchannel_ignores = sorted(list(set(w4a8_perchannel_cfg.get("exclude", []) + default_ignores)))
+        w4a8_pergroup_ignores = sorted(list(set(w4a8_pergroup_cfg.get("exclude", []) + default_ignores)))
+
         script_lines = []
 
         script_lines.extend([
             "import os",
-            ""
+            "",
             "import torch",
             "from datasets import load_dataset",
             "from transformers import AutoModelForCausalLM, AutoTokenizer",
             "",
             "from llmcompressor import oneshot",
-            "from llmcompressor.modifiers.awq import AWQModifier"
-            "from llmcompressor.modifiers.quantization import GPTQModifier, QuantizationModifier"
+            "from llmcompressor.modifiers.awq import AWQModifier",
+            "from llmcompressor.modifiers.quantization import GPTQModifier, QuantizationModifier",
             "from llmcompressor.modifiers.smoothquant import SmoothQuantModifier",
             "from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme, QuantizationType, QuantizationStrategy",
             "",
@@ -488,36 +541,36 @@ class LLMCompressorQuantizer(BaseQuantizer):
         
         script_lines.extend([
             f"MODEL_ID = {repr(self.base_model_path)}",
-            f"model = AutoModelForCausalLM.from_pretrained(MODEL_ID, torch_dtype=\"auto\")",
-            f"tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)",
+            f"SAVE_DIR = {repr(self.output_weights_path)}",
+            "model = AutoModelForCausalLM.from_pretrained(",
+            "    MODEL_ID,",
+            "    device_map='auto',",
+            "    torch_dtype=torch.bfloat16,",
+            "    trust_remote_code=True,",
+            ")",
+            "tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)",
             "",
         ])
         
-        need_calib_data = self.config['modifier'] != 'PTQ' or self.config['enable_smoothquant']
-
-        modifier_map = {
-            'AWQ': 'AWQModifier',
-            'PTQ': 'QuantizationModifier',
-            'GPTQ': 'GPTQModifier',
-        }
+        need_calib_data = self.config.get('modifier', 'PTQ') != 'PTQ' or self.config.get('enable_smoothquant', False)
 
         if need_calib_data:
             script_lines.extend([
-                f"DATASET_ID = {repr(self.config['calib_dataset_path'])}",
-                f"DATASET_SPLIT = {repr('train_sft')}",
+                f"DATASET_ID = {repr(self.config.get('calib_dataset_path', 'HuggingFaceH4/ultrachat_200k'))}",
+                f"DATASET_SPLIT = {repr(self.config.get('calib_dataset_split', 'train_sft'))}",
+                f"NUM_CALIBRATION_SAMPLES = {self.config.get('num_calibration_samples', 512)}",
+                f"MAX_SEQUENCE_LENGTH = {self.config.get('max_sequence_length', 2048)}",
                 "",
-                f"NUM_CALIBRATION_SAMPLES = {self.config['num_calibration_samples']}",
-                f"MAX_SEQUENCE_LENGTH = {self.config['max_sequence_length']}",
-                ""
-                f"ds = load_dataset(DATASET_ID, split=f\"{{DATASET_SPLIT}}[:{{NUM_CALIBRATION_SAMPLES}}]\")",
-                f"ds = ds.shuffle(seed=42)",
+                "ds = load_dataset(DATASET_ID, split=f'{{DATASET_SPLIT}}[:{{NUM_CALIBRATION_SAMPLES}}]')",
+                "ds = ds.shuffle(seed=42)",
                 "",
                 "",
                 "def preprocess(example):",
                 "    return {",
-                "        \"text\": tokenizer.apply_chat_template(",
-                "            example[\"messages\"],",
+                "        'text': tokenizer.apply_chat_template(",
+                "            example['messages'],",
                 "            tokenize=False,",
+                "            add_generation_prompt=False,",
                 "        )",
                 "    }",
                 "",
@@ -527,7 +580,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "",
                 "def tokenize(sample):",
                 "    return tokenizer(",
-                "        sample[\"text\"],",
+                "        sample['text'],",
                 "        padding=False,",
                 "        max_length=MAX_SEQUENCE_LENGTH,",
                 "        truncation=True,",
@@ -537,31 +590,64 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "",
                 "ds = ds.map(tokenize, remove_columns=ds.column_names)",
                 "",
+            ])
+
+        script_lines.extend([
+            f"w8a8_dynamic = {self._format_dict(w8a8_dynamic, indent=0)}",
+            "",
+            f"w4a8_dynamic_perchannel = {self._format_dict(w4a8_dynamic_perchannel, indent=0)}",
+            "",
+            f"w4a8_dynamic_pergroup = {self._format_dict(w4a8_dynamic_pergroup, indent=0)}",
+            "",
+        ])
+
+        script_lines.extend([
+            f"default_ignores = {repr(default_ignores)}",
+            "",
+            f"w8a8_ignore = {repr(w8a8_ignores)}",
+            f"w4a8_perchannel_ignore = {repr(w4a8_perchannel_ignores)}",
+            f"w4a8_pergroup_ignore = {repr(w4a8_pergroup_ignores)}",
+            "",
+        ])
+
+        modifier_map = {
+            'AWQ': 'AWQModifier',
+            'PTQ': 'QuantizationModifier',
+            'GPTQ': 'GPTQModifier',
+        }
+
+        modifier = modifier_map.get(self.config.get('modifier', 'PTQ'), 'QuantizationModifier')
+
+        script_lines.extend([
+            "recipe = []",
+            "",
+        ])
+
+        if self.config.get('enable_smoothquant', False):
+            smoothing_strength = self.config.get('smoothing_strength', 0.8)
+            script_lines.extend([
+                f"recipe.append(SmoothQuantModifier(smoothing_strength={smoothing_strength}))",
                 "",
             ])
 
         script_lines.extend([
-            "ignore = ['lm_head', 're:.*mlp.gate$', 'model.embed_tokens']",
-            "recipe = [",
-        ])
-
-        if self.config['enable_smoothquant']:
-            script_lines.append(f"    SmoothQuantModifier(smoothing_strength={self.config['smoothing_strength']}),")
-        script_lines.extend([
-            f"    {modifier_map[self.config['modifier']]}(",
+            f"if w8a8_dynamic['group_0']['targets']:",
+            f"    recipe.append({modifier}(",
             "        config_groups=w8a8_dynamic,",
-            "        ignore=ignore,",
-            "    ),",
-            f"    {modifier_map[self.config['modifier']]}(",
-            "        config_groups=w4a8_dynamic_perchannel,",
-            "        ignore=ignore,",
-            "    ),",
-            f"    {modifier_map[self.config['modifier']]}(",
-            "        config_groups=w4a8_dynamic_pergroup,",
-            "        ignore=ignore,",
-            "    ),",
-            "]",
+            "        ignore=w8a8_ignore,",
+            "    ))",
             "",
+            f"if w4a8_dynamic_perchannel['group_0']['targets']:",
+            f"    recipe.append({modifier}(",
+            "        config_groups=w4a8_dynamic_perchannel,",
+            "        ignore=w4a8_perchannel_ignore,",
+            "    ))",
+            "",
+            f"if w4a8_dynamic_pergroup['group_0']['targets']:",
+            f"    recipe.append({modifier}(",
+            "        config_groups=w4a8_dynamic_pergroup,",
+            "        ignore=w4a8_pergroup_ignore,",
+            "    ))",
             "",
         ])
         
@@ -574,7 +660,8 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "    tokenizer=tokenizer,",
                 "    max_seq_length=MAX_SEQUENCE_LENGTH,",
                 "    num_calibration_samples=NUM_CALIBRATION_SAMPLES,",
-                f"    output_dir={repr(self.output_weights_path)}"
+                f"    output_dir=SAVE_DIR,",
+                "    save_compressed=True,",
                 ")",
                 "",
                 "",
@@ -585,22 +672,23 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "    model=model,",
                 "    recipe=recipe,",
                 "    tokenizer=tokenizer,",
-                "    trust_remote_code_model=True,",
-                f"    output_dir={repr(self.output_weights_path)}"
+                f"    output_dir=SAVE_DIR,",
+                "    save_compressed=True,",
                 ")",
                 "",
                 "",
             ])
         
         # script_lines.extend([
-        #     f"SAVE_DIR = {repr(self.output_weights_path)}",
         #     "model.save_pretrained(SAVE_DIR, save_compressed=True)",
         #     "tokenizer.save_pretrained(SAVE_DIR)",
         # ])
 
         final_script = "\n".join(script_lines)
         
-
+        # Create output directory if it doesn't exist
+        os.makedirs(os.path.dirname(self.output_config_path), exist_ok=True)
+        
         with open(self.output_config_path, "w", encoding="utf-8") as f:
             f.write(final_script)
 
@@ -608,9 +696,9 @@ class LLMCompressorQuantizer(BaseQuantizer):
             logger.debug("Generating llmcompressor config file...")
             try:
                 self._generate_llmcompressor_config()
-                logger.info(f"scucceded to generate quant config: {self.output_config_path}")
+                logger.info(f"scucceded to generate llmcompressor quantization script: {self.output_config_path}")
             except Exception as e:
-                logger.error(f"Failed to generate quant config: {e}")
+                logger.error(f"Failed to generate llmcompressor quantization script: {e}")
                 raise
 
     def run(self):
