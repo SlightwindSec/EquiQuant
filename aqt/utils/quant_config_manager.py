@@ -9,8 +9,6 @@ from utils.logger import logger
 
 from torch import nn
 
-from aqt.utils.model import get_linear_layers_classes
-
 
 @dataclass
 class QuantLayerConfig:
@@ -40,17 +38,10 @@ class QuantLayerConfigManager:
         model: nn.Module,
     ) -> Dict[str, QuantLayerConfig]:
         cfg = {}
-        count = 0
         for name, module in model.named_modules():
-
             self.update_hybrid_quant_config(
                 args=args, name=name, module=module, cfg=cfg
             )
-            if count < 10:
-                logger.info(f"name: {name}, module: {module}")
-                if name in cfg.keys():
-                    logger.info(f"name: {name}, quant: {cfg[name]}")
-            count += 1
 
         return cfg
 
@@ -63,7 +54,7 @@ class QuantLayerConfigManager:
     ) -> None:
         pattern_cfg = _load_hybrid_quant_config(args)
 
-        if not isinstance(module, get_linear_layers_classes()) or name in cfg:
+        if not isinstance(module, nn.Linear) or name in cfg:
             return
 
         for pattern, rule in pattern_cfg.items():
@@ -80,9 +71,12 @@ class QuantLayerConfigManager:
                 group_size = 0
             else:
                 # FIXME: 硬编码修改
-                weight_bits = 4
+                # weight_bits = 4
+                # act_bits = 8
+                # group_size = 0 if ".mlp.experts." in name else 64
+                weight_bits = 4 if ".mlp.experts." in name else 8
                 act_bits = 8
-                group_size = 0 if ".mlp.experts." in name else 64
+                group_size = 0
 
             cfg[name] = QuantLayerConfig(
                 weight_bits=weight_bits,
@@ -108,7 +102,7 @@ class QuantLayerConfigManager:
             cfg=layers_quant_mapping, experts_num=self.experts_num
         )
         with open(save_path, "w", encoding="utf-8") as f:
-            print("Saving hybrid quant config...")
+            logger.info("Saving hybrid quant config...")
             json.dump(output, f, indent=4)
 
     def _create_quant_layers_mapping(
@@ -198,7 +192,7 @@ def _validate_group_size_for_layer(
 
     if weight_bits == 8 and act_bits == 8:
         if group_size != 0:
-            print(
+            logger.info(
                 "WARNING! Currently, there is no per-group support for w8a8 kernel. "
                 f"Use group_size = 0 for layer '{name}' instead of {group_size}."
             )

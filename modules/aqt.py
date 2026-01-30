@@ -13,10 +13,11 @@ class AutomaticQuantizationTool:
     2) 基于模板 + 敏感度，输出最终的 modelslim YAML
     """
 
-    def __init__(self, aqt_config: dict, base_model_path: str, workspace: dict):
+    def __init__(self, aqt_config: dict, base_model_path: str, workspace: dict, quant_type: str="minmax"):
         self.config = aqt_config or {}
         self.base_model_path = os.path.abspath(base_model_path)
         self.workspace = workspace or {}
+        self.quant_type = quant_type
 
         self.metric = self.config.get('sensitivity_metric', 'mse')
         self.results_root = os.path.abspath(
@@ -63,7 +64,7 @@ class AutomaticQuantizationTool:
             f"--quant-data-save-path {shlex.quote(quant_data_save_path)} "
             f"--quant-samples-num {self.config.get('quant_samples_num', 128)} "
             f"--quant-context-length {self.config.get('quant_context_length', 4096)} "
-            f"--quant-type modelslim "
+            f"--quant-type {self.quant_type} "
             f"--quant-sym "
             f"--disable-smoothquant "
             f"--sensitivity-metric {shlex.quote(self.metric)} "

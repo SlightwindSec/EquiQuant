@@ -15,5 +15,5 @@ def seed_everything(seed: int = 42, torch_deterministic: bool = False) -> None:
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
+    torch.npu.manual_seed(seed)
     torch.use_deterministic_algorithms(mode=torch_deterministic)

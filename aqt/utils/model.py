@@ -1,42 +1,27 @@
 from __future__ import annotations
 
-import functools
-from typing import Dict, List, Type, Tuple
+from typing import Dict, List
 
 import torch
 from torch import Tensor, nn
-
-try:
-    from msmodelslim.pytorch.llm_ptq.llm_ptq_tools.quant_modules import LinearQuantizer
-    from msmodelslim.pytorch.lowbit.quant_modules import (
-        LinearQuantizer as LowBitLinearQuantizer,
-    )
-except ImportError:
-    LinearQuantizer = nn.Linear
-    LowBitLinearQuantizer = nn.Linear
 
 
 LoaderT = List[torch.Tensor]
 ModelCacheT = Dict[str, List[Tensor]]
 
 
-def get_linear_layers_classes() -> Tuple[Type[nn.Module], ...]:
-    return nn.Linear, LinearQuantizer, LowBitLinearQuantizer
-
-
 def find_layers(
     module: nn.Module,
-    layers: Tuple[Type[nn.Module], ...] = get_linear_layers_classes(),
     name: str = "",
 ) -> dict[str, nn.Module]:
-    if type(module) in layers:
+    if isinstance(module, nn.Linear):
         return {name: module}
 
     res = {}
     for name1, child in module.named_children():
         res.update(
             find_layers(
-                child, layers=layers, name=name + "." + name1 if name != "" else name1
+                child, name=name + "." + name1 if name != "" else name1
             )
         )
     return res

@@ -41,10 +41,10 @@ class EquiQuantEngine:
         self.last_results = None
         self.run_id = 0
 
-        self.quantization_tool = config['quantization_tool']
+        self.quantization_tool = config.get('quantization_tool', 'msmodelslim')
 
         # AQT 相关
-        self.aqt_config = self.config.get('aqt') or {}
+        self.aqt_config = config.get('aqt') or {}
         self.aqt_tool = None
         self.current_budget = None
         self._init_aqt()
@@ -104,7 +104,7 @@ class EquiQuantEngine:
         self.aqt_tool = AutomaticQuantizationTool(
             aqt_config=self.aqt_config,
             base_model_path=self.config['base_model_path'],
-            workspace=self.workspace
+            workspace=self.workspace,
         )
         self.current_budget = self.aqt_tool.initial_budget
         logger.info(f"AQT detected. Initial checkpoint budget: {self.current_budget} MB")

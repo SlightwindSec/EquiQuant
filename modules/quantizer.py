@@ -32,6 +32,7 @@ yaml.add_representer(FlowStyleList, flow_style_representer)
 SUPPORTED_QUANTIZERS = ['msmodelslim', 'llmcompressor']
 
 SUPPORTED_QUANTIZATION_SCHEMAS = [
+    'float',
     'w8a8_dynamic',
     'w4a8_dynamic_pergroup',
     'w4a8_dynamic_perchannel',

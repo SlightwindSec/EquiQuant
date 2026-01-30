@@ -34,10 +34,10 @@ evaluation_datasets:
       - "aime2024_accuracy"
 
 aisbench_timeout: 7200
-aisbench_request_rate: 1
+aisbench_request_rate: 0
 aisbench_retry: 2
-aisbench_batch_size: 32
-aisbench_max_out_len: 2
+aisbench_batch_size: 64
+aisbench_max_out_len: 32768
 aisbench_pred_postprocessor: "extract_non_reasoning_content"
 aisbench_generation_kwargs:
   temperature: 0.5
@@ -50,7 +50,7 @@ aisbench_default_metric_keys:
   - "final_accuracy"
   - "accuracy"
   - "score"
-aisbench_use_chat_template: false
+aisbench_use_chat_template: true
 aisbench_cleanup_model_config: true
 aisbench_extra_args: null
 
@@ -67,11 +67,13 @@ vllm_args:
   trust-remote-code: true
   tensor-parallel-size: 2
   data-parallel-size: 1
-
+  enable-expert-parallel: true
+  async-scheduling: true
   # quantization: "ascend"
   enable-prefix-caching: false
-  max-model-len: 8192
-  max-num-batched-tokens: 8192
+  max-num-seqs: 64
+  max-model-len: 40960
+  max-num-batched-tokens: 16384
   gpu-memory-utilization: 0.9
   additional_config:
     ascend_scheduler_config:

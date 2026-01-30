@@ -78,7 +78,7 @@ def parse_args() -> Namespace:
     parser.add_argument(
         "--quant-type",
         type=str,
-        choices=["minmax", "ssz", "modelslim"],
+        choices=["minmax", "ssz"],
         default="minmax",
         help="Quantization Method.",
     )
