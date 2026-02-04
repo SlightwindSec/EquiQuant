@@ -51,6 +51,12 @@ def parse_args() -> Namespace:
         help="Path to save processed calibration samples.",
     )
     parser.add_argument(
+        "--last_hybrid_quant_schema_path",
+        type=str,
+        default="",
+        help="Hybrid quant schema path of last run.",
+    )
+    parser.add_argument(
         "--quant-samples-num",
         type=int,
         default=128,
@@ -139,7 +145,7 @@ def parse_args() -> Namespace:
     # automatic quantization args
     parser.add_argument(
         "--sensitivity-metric",
-        default=None,
+        default="mse",
         help="Metric to use for computing sensitivity scores",
     )
     parser.add_argument(
@@ -161,7 +167,8 @@ def parse_args() -> Namespace:
         default=2500,
         help="Checkpoint size budget for hybrid quantization.",
     )
-    parser.add_argument("--save-dir", default="results")
+    parser.add_argument("--save-dir")
+    parser.add_argument("--results_root")
 
     args = parser.parse_args()
 

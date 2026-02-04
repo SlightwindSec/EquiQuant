@@ -44,9 +44,8 @@ BYTES_PER_8BIT_PARAM = 1
 def _compute_sensitivity_scores(
     model: nn.Module,
     args: Namespace,
-    quant_layer_cfg_mngr: QuantLayerConfigManager,
     calibration_samples: Tensor,
-) -> Dict[str, Dict]:
+) -> str:
     # Note: This function is directly inherited from our quantization pipeline
     # where we usually use GPTQ as a weight quantizer. Once we decide to use
     # data-free only PTQ techniques to compute sensitivity scores, this code
@@ -96,9 +95,6 @@ def _compute_sensitivity_scores(
         for quant_bits in quant_bits_list:
             for name, linear_layer in subset.items():
                 layer_name = f"model.layers.{layer_idx_str}.{name}"
-                quant_layer_cfg_mngr.update_hybrid_quant_config(
-                    args=args, module=linear_layer, name=layer_name, cfg=quant_layer_cfg_mngr.cfg
-                )
                 # FIXME: quantizer 实现与初始化
                 ptq[name] = PostTrainingQuantization(
                     layer=linear_layer,
@@ -106,7 +102,7 @@ def _compute_sensitivity_scores(
                     quant_bits=quant_bits,
                     quant_sym=True,
                     context_length=args.quant_context_length,
-                    group_size=quant_layer_cfg_mngr.get_group_size(layer_name),
+                    group_size=0,
                     sensitivity_metric=sensitivity_metrics,
                 )
 
@@ -125,9 +121,15 @@ def _compute_sensitivity_scores(
             for name in subset:
                 ptq[name].post_batch()
 
+            flag = True
             for name, module in subset.items():
                 layer_name = f"model.layers.{layer_idx_str}.{name}"
-                logger.debug(f"Layer {layer_idx_str}: {name} (quant to {quant_bits} bits)")
+                if "mlp.experts" not in name:
+                    logger.info(f"Layer {layer_idx_str}: {name} (quant to {quant_bits} bits)")
+                else:
+                    if flag:
+                        logger.info(f"Layer {layer_idx_str}: mlp.experts.* (quant to {quant_bits} bits)")
+                        flag = False
                 losses = ptq[name].run(transform_weights=False)
                 sensitivity_scores[layer_name][quant_bits] = {
                     metric: losses[i] for i, metric in enumerate(sensitivity_metrics)
@@ -171,7 +173,7 @@ def _compute_sensitivity_scores(
     # sensitivity scores analysis
     if args.sensitivity_metric is not None:
         for metric in sensitivity_metrics:
-            save_dir = os.path.join(args.save_dir, args.quant_type, metric)
+            save_dir = os.path.join(args.results_root, args.quant_type, metric)
             os.makedirs(save_dir, exist_ok=True)
             analyze_sensitivity_scores(
                 sensitivity_scores=sensitivity_scores,
@@ -191,18 +193,22 @@ def _compute_sensitivity_scores(
         )
         with open(scores_save_path, "w") as f:
             json.dump(sensitivity_scores, f, indent=4)
+        
+        return scores_save_path
 
-    return sensitivity_scores
+    return ""
 
 
 def update_quant_layer_cfg(
-    sensitivity_scores: Dict[str, Dict[int, Any]],
+    scores_save_path: str,
     model: nn.Module,
     args: Namespace,
     quant_layer_cfg_mngr: QuantLayerConfigManager,
     score_name: str,
     ckpt_size_budget_mb: int = 500,
 ) -> None:
+    with open(scores_save_path) as f:
+        sensitivity_scores = json.load(f)
     experts_num = getattr(model.config, "num_experts", 0)
     layers_mapping = get_layer_sensitivity_group_mapping(experts_num)
     layer_score_info = []
@@ -280,29 +286,37 @@ def main() -> None:
         local_files_only=True,
     )
 
-    seed_everything(args.seed)
-    calibration_samples = prepare_calibration_samples(args=args)
-    logger.info("prepare calibration samples successfully!")
-    
+    logger.info(f"last_hybrid_quant_schema_path: {args.last_hybrid_quant_schema_path}")
     quant_layer_cfg_mngr = QuantLayerConfigManager(args=args, model=model)
 
-    with torch.no_grad():
-        seed_everything(args.seed)
-        sensitivity_scores = _compute_sensitivity_scores(
-            model=model,
-            quant_layer_cfg_mngr=quant_layer_cfg_mngr,
-            args=args,
-            calibration_samples=calibration_samples,
+    if args.sensitivity_metric is not None:
+        save_dir = os.path.join(args.results_root, args.quant_type, args.sensitivity_metric)
+        scores_save_path = os.path.join(
+            save_dir, f"{args.sensitivity_metric}_scores.json"
         )
 
-    update_quant_layer_cfg(
-        sensitivity_scores=sensitivity_scores,
-        model=model,
-        args=args,
-        quant_layer_cfg_mngr=quant_layer_cfg_mngr,
-        score_name=args.sensitivity_metric.split(".")[0],
-        ckpt_size_budget_mb=args.ckpt_size_budget_mb,
-    )
+    if args.last_hybrid_quant_schema_path == "":
+        seed_everything(args.seed)
+        calibration_samples = prepare_calibration_samples(args=args)
+        logger.info("prepare calibration samples successfully!")
+
+        with torch.no_grad():
+            seed_everything(args.seed)
+            scores_save_path = _compute_sensitivity_scores(
+                model=model,
+                args=args,
+                calibration_samples=calibration_samples,
+            )
+    else:
+        update_quant_layer_cfg(
+            scores_save_path=scores_save_path,
+            model=model,
+            args=args,
+            quant_layer_cfg_mngr=quant_layer_cfg_mngr,
+            score_name=args.sensitivity_metric.split(".")[0],
+            ckpt_size_budget_mb=args.ckpt_size_budget_mb,
+        )
+
     layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping(
         overwrite_act_to_8bit=False
     )

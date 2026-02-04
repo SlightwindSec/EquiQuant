@@ -39,7 +39,6 @@ SUPPORTED_QUANTIZATION_SCHEMAS = [
 ]
 
 
-
 class BaseQuantizer(abc.ABC):
     """
     封装 量化器。
@@ -442,85 +441,26 @@ class LLMCompressorQuantizer(BaseQuantizer):
         def add_regex_prefix(patterns):
             result = []
             for pattern in patterns:
-                if isinstance(pattern, str) and not pattern.startswith('re:'):
-                    result.append(f're:{pattern}')
+                if isinstance(pattern, str):
+                    if not pattern.startswith('re:'):
+                        pattern = f're:{pattern}'
+                    if pattern.endswith("mlp.experts.*"):
+                        for suffix in [".gate_proj", ".up_proj", ".down_proj"]:
+                            result.append(pattern + suffix)
+                    else:
+                        result.append(pattern)
                 else:
                     result.append(pattern)
             return result
 
-        w8a8_cfg['include'] = add_regex_prefix(w8a8_cfg.get('include', []))
-        w8a8_cfg['exclude'] = add_regex_prefix(w8a8_cfg.get('exclude', []))
-        
-        w4a8_perchannel_cfg['include'] = add_regex_prefix(w4a8_perchannel_cfg.get('include', []))
-        w4a8_perchannel_cfg['exclude'] = add_regex_prefix(w4a8_perchannel_cfg.get('exclude', []))
-        
-        w4a8_pergroup_cfg['include'] = add_regex_prefix(w4a8_pergroup_cfg.get('include', []))
-        w4a8_pergroup_cfg['exclude'] = add_regex_prefix(w4a8_pergroup_cfg.get('exclude', []))
-
-        w8a8_dynamic = {
-            "group_0": {
-                "targets": w8a8_cfg.get("include", []),
-                "weights": {
-                    "num_bits": 8,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.CHANNEL",
-                    "symmetric": True,
-                    "dynamic": False
-                },
-                "input_activations": {
-                    "num_bits": 8,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.TOKEN",
-                    "symmetric": True,
-                    "dynamic": True
-                },
-            },
-        }
-        w4a8_dynamic_perchannel = {
-            "group_0": {
-                "targets": w4a8_perchannel_cfg.get("include", []),
-                "weights": {
-                    "num_bits": 4,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.CHANNEL",
-                    "symmetric": True,
-                    "dynamic": False,
-                },
-                "input_activations": {
-                    "num_bits": 8,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.TOKEN",
-                    "symmetric": True,
-                    "dynamic": True
-                },
-            },
-        }
-        w4a8_dynamic_pergroup = {
-            "group_0": {
-                "targets": w4a8_pergroup_cfg.get("include", []),
-                "weights": {
-                    "num_bits": 4,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.GROUP",
-                    "symmetric": True,
-                    "dynamic": False,
-                    "group_size": 64
-                },
-                "input_activations": {
-                    "num_bits": 8,
-                    "type": "QuantizationType.INT",
-                    "strategy": "QuantizationStrategy.TOKEN",
-                    "symmetric": True,
-                    "dynamic": True
-                },
-            },
-        }
+        w8a8_targets = add_regex_prefix(w8a8_cfg.get('include', []))
+        w4a8_perchannel_targets = add_regex_prefix(w4a8_perchannel_cfg.get('include', []))
+        w4a8_pergroup_targets = add_regex_prefix(w4a8_pergroup_cfg.get('include', []))
 
         default_ignores = ['lm_head', 're:.*mlp.gate$', 'model.embed_tokens', 're:.*mlp.shared_expert_gate$']
-
-        w8a8_ignores = sorted(list(set(w8a8_cfg.get("exclude", []) + default_ignores)))
-        w4a8_perchannel_ignores = sorted(list(set(w4a8_perchannel_cfg.get("exclude", []) + default_ignores)))
-        w4a8_pergroup_ignores = sorted(list(set(w4a8_pergroup_cfg.get("exclude", []) + default_ignores)))
+        w8a8_ignores = sorted(list(set(add_regex_prefix(w8a8_cfg.get('exclude', [])) + default_ignores)))
+        w4a8_perchannel_ignores = sorted(list(set(add_regex_prefix(w4a8_perchannel_cfg.get('exclude', [])) + default_ignores)))
+        w4a8_pergroup_ignores = sorted(list(set(add_regex_prefix(w4a8_pergroup_cfg.get('exclude', [])) + default_ignores)))
 
         script_lines = []
 
@@ -594,11 +534,9 @@ class LLMCompressorQuantizer(BaseQuantizer):
             ])
 
         script_lines.extend([
-            f"w8a8_dynamic = {self._format_dict(w8a8_dynamic, indent=0)}",
-            "",
-            f"w4a8_dynamic_perchannel = {self._format_dict(w4a8_dynamic_perchannel, indent=0)}",
-            "",
-            f"w4a8_dynamic_pergroup = {self._format_dict(w4a8_dynamic_pergroup, indent=0)}",
+            f"w8a8_targets = {repr(w8a8_targets)}",
+            f"w4a8_perchannel_targets = {repr(w4a8_perchannel_targets)}",
+            f"w4a8_pergroup_targets = {repr(w4a8_pergroup_targets)}",
             "",
         ])
 
@@ -609,6 +547,44 @@ class LLMCompressorQuantizer(BaseQuantizer):
             f"w4a8_perchannel_ignore = {repr(w4a8_perchannel_ignores)}",
             f"w4a8_pergroup_ignore = {repr(w4a8_pergroup_ignores)}",
             "",
+        ])
+
+        script_lines.extend([
+            'w8a8_dynamic = {',
+            '   "group_0": QuantizationScheme(',
+            '       targets=w8a8_targets,',
+            '       weights=QuantizationArgs(',
+            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.CHANNEL, symmetric=True, dynamic=False',
+            '       ),',
+            '       input_activations=QuantizationArgs(',
+            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
+            '       ),',
+            '   ),',
+            '}',
+            '',
+            'w4a8_dynamic_perchannel = {',
+            '   "group_0": QuantizationScheme(',
+            '       targets=w4a8_perchannel_targets,',
+            '       weights=QuantizationArgs(',
+            '           num_bits=4, type=QuantizationType.INT, strategy=QuantizationStrategy.CHANNEL, symmetric=True, dynamic=False',
+            '       ),',
+            '       input_activations=QuantizationArgs(',
+            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
+            '       ),',
+            '   ),',
+            '}',
+            '',
+            'w4a8_dynamic_pergroup = {',
+            '   "group_0": QuantizationScheme(',
+            '       targets=w4a8_pergroup_targets,',
+            '       weights=QuantizationArgs(',
+            '           num_bits=4, type=QuantizationType.INT, strategy=QuantizationStrategy.GROUP, symmetric=True, dynamic=False, group_size=64',
+            '       ),',
+            '       input_activations=QuantizationArgs(',
+            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
+            '       ),',
+            '   ),',
+            '}'
         ])
 
         modifier_map = {
@@ -631,26 +607,30 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "",
             ])
 
-        script_lines.extend([
-            f"if w8a8_dynamic['group_0']['targets']:",
-            f"    recipe.append({modifier}(",
-            "        config_groups=w8a8_dynamic,",
-            "        ignore=w8a8_ignore,",
-            "    ))",
-            "",
-            f"if w4a8_dynamic_perchannel['group_0']['targets']:",
-            f"    recipe.append({modifier}(",
-            "        config_groups=w4a8_dynamic_perchannel,",
-            "        ignore=w4a8_perchannel_ignore,",
-            "    ))",
-            "",
-            f"if w4a8_dynamic_pergroup['group_0']['targets']:",
-            f"    recipe.append({modifier}(",
-            "        config_groups=w4a8_dynamic_pergroup,",
-            "        ignore=w4a8_pergroup_ignore,",
-            "    ))",
-            "",
-        ])
+        if w8a8_targets:
+            script_lines.extend([
+                f"recipe.append({modifier}(",
+                "   config_groups=w8a8_dynamic,",
+                "   ignore=w8a8_ignore,",
+                "))",
+                "",
+            ])
+        if w4a8_perchannel_targets:
+            script_lines.extend([
+                f"recipe.append({modifier}(",
+                "   config_groups=w4a8_dynamic_perchannel,",
+                "   ignore=w4a8_perchannel_ignore,",
+                "))",
+                "",
+            ])
+        if w4a8_pergroup_targets:
+            script_lines.extend([
+                f"recipe.append({modifier}(",
+                "   config_groups=w4a8_dynamic_pergroup,",
+                "   ignore=w4a8_pergroup_ignore,",
+                "))",
+                "",
+            ])
         
         if need_calib_data:
             script_lines.extend([

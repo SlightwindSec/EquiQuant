@@ -137,12 +137,10 @@ class QuantLayerConfigManager:
         return layers_quant_mapping
 
 
-
-
 def _load_hybrid_quant_config(args: Namespace) -> Dict[str, str]:
     config = {}
-    if args.hybrid_quant:
-        with open(args.hybrid_quant_config_path, "r", encoding="utf-8") as f:
+    if args.hybrid_quant and args.last_hybrid_quant_schema_path != "":
+        with open(args.last_hybrid_quant_schema_path, "r", encoding="utf-8") as f:
             config = json.load(f)
 
     return config

@@ -54,6 +54,7 @@ class AutomaticQuantizationTool:
         budget_mb: int,
         quant_data_path: str,
         quant_data_save_path: str,
+        last_hybrid_quant_schema_path: str,
     ) -> str:
         cmd = (
             f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
@@ -71,7 +72,9 @@ class AutomaticQuantizationTool:
             f"--compute-sensitivity-scores-only "
             f"--ckpt-size-budget-mb {budget_mb} "
             f"--save-dir {shlex.quote(save_dir)} "
-            f"--eval-ppl"
+            f"--results_root {self.results_root} "
+            f"--last_hybrid_quant_schema_path {shlex.quote(last_hybrid_quant_schema_path)} "
+            f"--eval-ppl "
         )
         return cmd
 
@@ -80,6 +83,7 @@ class AutomaticQuantizationTool:
         self,
         run_id: int,
         budget_mb: int,
+        last_hybrid_quant_schema_path: str = ""
     ) -> str:
         """
         运行 AQT 获取敏感度分析得到的量化配置。
@@ -91,11 +95,11 @@ class AutomaticQuantizationTool:
         quant_data_path = os.path.abspath(quant_data_path)
 
         save_dir = self._build_save_dir(run_id, budget_mb)
-        quant_data_save_path = os.path.join(save_dir, "calib_data.pt")
+        quant_data_save_path = os.path.join(self.results_root, "calib_data.pt")
         os.makedirs(os.path.dirname(quant_data_save_path), exist_ok=True)
 
         # 敏感度分析
-        analysis_cmd = self._analysis_cmd(save_dir, budget_mb, quant_data_path, quant_data_save_path)
+        analysis_cmd = self._analysis_cmd(save_dir, budget_mb, quant_data_path, quant_data_save_path, last_hybrid_quant_schema_path)
         success, stdout, stderr = ShellRunner.run_cmd(analysis_cmd, timeout=10800)
         if not success:
             logger.error("AQT sensitivity analysis failed.")

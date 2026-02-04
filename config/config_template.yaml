@@ -1,4 +1,4 @@
-base_model_path: "/mnt/share/weight/Qwen3-30B-A3B"
+base_model_path: "/home/weight/Qwen3-30B-A3B"
 
 # -----------------------------------------------
 # 工作区 (运行时文件)
@@ -14,11 +14,15 @@ workspace_quant_weights_dir: "quantized_weights"
 strategy_initial_fallback_layers:
   - 'lm_head'
 
+disable_names:
+  - '*kv_b_proj'
+  - '*kv_a_proj*'
+
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
 evaluation_tolerance_ratio: 1.0
-disable_qwen_thinking: true
+disable_qwen_thinking: false
 
 evaluation_datasets:
   # ceval:
@@ -61,7 +65,7 @@ vllm_port: 1234
 vllm_env_vars:
   HCCL_BUFFSIZE: 1024
   # VLLM_VERSION: "0.11.0"
-  ASCEND_RT_VISIBLE_DEVICES: "8,9"
+  ASCEND_RT_VISIBLE_DEVICES: "14,15"
   # HCCL_OP_EXPANSION_MODE: "AIV"
 vllm_args:
   trust-remote-code: true
@@ -75,10 +79,13 @@ vllm_args:
   max-model-len: 40960
   max-num-batched-tokens: 16384
   gpu-memory-utilization: 0.9
-  additional_config:
+  additional-config:
     ascend_scheduler_config:
-      enabled: true
+      enabled: false
+    enable_cpu_binding: true
     enable_weight_nz_layout: true
+  compilation-config:
+    cudagraph_mode: "FULL_DECODE_ONLY"
 
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)
@@ -87,7 +94,7 @@ vllm_args:
 aqt_enabled: true
 aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
-aqt_ascend_visible_devices: "8"
+aqt_ascend_visible_devices: "14"
 # 校准集
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
 aqt_quant_samples_num: 128
@@ -108,7 +115,7 @@ aqt_max_budget_mb: 12000
 # quantization_tool: "llmcompressor"
 # enable_smooth_quant: false
 # smooth_strength: 0.8
-# quantization_visible_devices: "0"
+# quantization_visible_devices: "1"
 # quantization_device: "npu"
 # quantization_model_type: "Qwen3-30B"
 # quantization_calib_data_path: ""
@@ -116,7 +123,7 @@ aqt_max_budget_mb: 12000
 # max_sequence_length: 2048
 # quantization_modifier: "PTQ"
 quantization_tool: "msmodelslim"
-quantization_visible_devices: "9"
+quantization_visible_devices: "15"
 quantization_model_type: "Qwen3-30B"
 quantization_device: "npu"
 quantization_trust_remote_code: true
@@ -145,9 +152,8 @@ quantization_template_config:
           scope: "per_channel"    # 权重量化范围: per_channel 或 per_group
           dtype: "int8"           # 数据类型: int8
           symmetric: true         # 是否对称量化
-          method: "ssz"        # 量化方法: minmax, ssz
+          method: "minmax"        # 量化方法: minmax, ssz
 
-      # w4a8量化配置（4bit权重，8bit激活）
       default_w4a8_dynamic_perchannel:
         act:
           scope: "per_token"
@@ -179,30 +185,12 @@ quantization_template_config:
       - type: "group"
         configs:
           - type: "linear_quant"
-            qconfig_ref: "default_w4a8_dynamic_perchannel"  # 引用 w4a8 动态配置
+            qconfig_ref: "default_w4a8_dynamic_perchannel"
           - type: "linear_quant"
             qconfig_ref: "default_w4a8_dynamic_pergroup"
           - type: "linear_quant"
-            qconfig_ref: "default_w8a8_dynamic"  # 引用上面定义的qconfig锚点
+            qconfig_ref: "default_w8a8_dynamic"
 
     save:
       - type: "ascendv1_saver"
-        part_file_size: 4
-
-  # modelslim_v0 格式配置（legacy格式，非AQT场景使用，将来会被移除）
-  v0:
-    metadata:
-      config_id: qwen3-w4a8-v0
-      score: 90
-      verified_model_types:
-        - Qwen3-30B
-      label:
-        is_sparse: false
-        kv_cache: false
-    spec:
-      calib_cfg:
-        mm_tensor: false
-        pdmix: false
-      calib_dataset: "mix_calib.jsonl"
-      calib_save_params:
         part_file_size: 4

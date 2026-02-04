@@ -39,6 +39,7 @@ class EquiQuantEngine:
                 'tolerance_ratio': tolerance
             }
         self.last_results = None
+        self.last_hybrid_quant_schema_path = ""
         self.run_id = 0
 
         self.quantization_tool = config.get('quantization_tool', 'msmodelslim')
@@ -148,8 +149,7 @@ class EquiQuantEngine:
     # Workflows
     # ------------------------------------------------------------------ #
     def _run_with_aqt(self):
-        # 在 AQT 模式下，回退层完全由 AQT 的敏感度结果决定，这里不主动指定。
-        base_disable_names = []
+        base_disable_names = self.config.get('disable_names')
 
         while True:
             self.run_id += 1
@@ -164,10 +164,12 @@ class EquiQuantEngine:
                 hybrid_quant_schema_path = self.aqt_tool.run(
                     run_id=self.run_id,
                     budget_mb=self.current_budget,
+                    last_hybrid_quant_schema_path=self.last_hybrid_quant_schema_path,
                 )
                 if not hybrid_quant_schema_path:
                     logger.error("AQT failed. Skipping this trial.")
                     break
+                self.last_hybrid_quant_schema_path = hybrid_quant_schema_path
 
                 # Step 2: 量化器获取量化配置生成量化所需yaml/py
                 quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]

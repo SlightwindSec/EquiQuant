@@ -54,6 +54,7 @@ class GlobalConfig:
         normalized['strategy'] = {
             'initial_fallback_layers': cfg.get('strategy_initial_fallback_layers', ['lm_head']),
         }
+        normalized['disable_names'] = cfg.get("disable_names", [])
 
         quantization_tool = cfg.get("quantization_tool", "msmodelslim")
         if quantization_tool not in SUPPORTED_QUANTIZATION_TOOLS:
@@ -69,11 +70,11 @@ class GlobalConfig:
             )
         # FIXME: 校准集判断逻辑修改
         calib_data_path = cfg.get("quantization_calib_data_path", "")
-        if quantization_tool == "llmcompressor" and calib_data_path == "":
-            raise ValueError(
-                f"Calibration data must be provided for llmcompressor! "
-                f"Please set `quantization_calib_data_path` in config/config.yaml"
-            )           
+        # if quantization_tool == "llmcompressor" and calib_data_path == "":
+        #     raise ValueError(
+        #         f"Calibration data must be provided for llmcompressor! "
+        #         f"Please set `quantization_calib_data_path` in config/config.yaml"
+        #     )          
         if quantization_tool == "msmodelslim":
             # 优先从quantization_template_config中读取w_bit/a_bit，如果没有则从旧字段读取
             quant_template = cfg.get('quantization_template_config') or {}
