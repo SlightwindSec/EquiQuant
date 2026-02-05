@@ -151,6 +151,13 @@ class EquiQuantEngine:
     def _run_with_aqt(self):
         base_disable_names = self.config.get('disable_names')
 
+        # Step 0: 调用 AQT 进行敏感度分析
+        logger.info(f"\n{'='*20} Sensitivity Alalysis (AQT) {'='*20}")
+        self.aqt_tool.compute_sensitivity_scores_only()
+        if not os.path.exists(self.aqt_tool.sensitivity_scores_save_path):
+            logger.error("Sensitivity_scores_save_path does not exist.")
+            return
+
         while True:
             self.run_id += 1
             logger.info(f"\n{'='*20} Trial {self.run_id} (AQT) {'='*20}")
@@ -166,7 +173,7 @@ class EquiQuantEngine:
                     budget_mb=self.current_budget,
                     last_hybrid_quant_schema_path=self.last_hybrid_quant_schema_path,
                 )
-                if not hybrid_quant_schema_path:
+                if not os.path.exists(hybrid_quant_schema_path):
                     logger.error("AQT failed. Skipping this trial.")
                     break
                 self.last_hybrid_quant_schema_path = hybrid_quant_schema_path

@@ -18,7 +18,7 @@ class PostTrainingQuantization:
         quant_sym: bool = True,
         context_length: int = 2048,
         group_size: int = 0,
-        sensitivity_metric: List[str] = None,
+        sensitivity_metric: str = None,
     ) -> None:
         self.layer = layer
         self.quant_type = quant_type
@@ -38,7 +38,7 @@ class PostTrainingQuantization:
         self.samples_num = 0
         self.context_length = context_length
 
-        self.sensitivity_metric = list(map(get_sensitivity_metric, sensitivity_metric)) if sensitivity_metric else []
+        self.sensitivity_metric = get_sensitivity_metric(sensitivity_metric)
 
         self.orig_weight = None
         self.dequant_weight = None
@@ -94,18 +94,14 @@ class PostTrainingQuantization:
             bias=self.bias
         )
         losses = [
-            metric(
+            self.sensitivity_metric(
                 inp=self.inps,
                 output=output,
                 weight=self.orig_weight,
                 quant_weight=self.dequant_weight,
                 bias=self.bias,
             ).item()
-            for metric in self.sensitivity_metric
         ]
-
-        if losses is not None and not transform_weights:
-            print(f"Mean error: {losses}")
 
         if not transform_weights:
             self.layer.weight.data = self.orig_weight.clone()

@@ -13,6 +13,7 @@ from torch import Tensor, nn
 
 from aqt.utils.lp_solver import LPS, get_constraints_for_search
 from aqt.utils.quant_config_manager import QuantLayerConfigManager
+from utils.logger import logger
 
 
 SensitivityScoresT = Dict[str, Dict[int, Dict[str, float]]]
@@ -369,14 +370,14 @@ def run_quant_schema_search(
         for layer_name in layer_names:
             best_recipe[layer_name] = best_recipe_for_name
             if verbose:
-                print(
+                logger.info(
                     f"AutoQuantize best recipe for {layer_name}: "
                     f"{best_recipe[layer_name]}"
                 )
 
     effective_bits_from_search = (best_constraints / total_weight_size) * 16
     if verbose:
-        print(
+        logger.info(
             "AutoQuantize effective bits from search: "
             f"{effective_bits_from_search: .2f}"
         )

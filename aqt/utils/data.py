@@ -41,7 +41,6 @@ def prepare_calibration_samples(args: Namespace) -> Tensor:
 
         calibration_samples = torch.vstack(samples)
 
-    print(f"Processed {samples_count} samples.")
     if not already_processed:
         torch.save(calibration_samples, args.quant_data_save_path)
 

@@ -1,7 +1,6 @@
 import fnmatch
 import json
 import re
-from argparse import Namespace
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Dict, List
@@ -20,39 +19,35 @@ class QuantLayerConfig:
 class QuantLayerConfigManager:
     def __init__(
         self,
-        args: Namespace,
         model: nn.Module,
+        last_hybrid_quant_schema_path: str,
     ) -> None:
         # "*mlp.gate" is skipped in MoE architecture, carefull with
         # "gate_proj" in self attention, don't add "*" at the end of the pattern
         self.skip_layers = ["*embed_tokens", "*mlp.gate", "*lm_head", "*indexer*"]
-        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(
-            args=args, model=model
-        )
-
+        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(model=model)
         self.experts_num = getattr(model.config, "num_experts", 0)
+        self.last_hybrid_quant_schema_path = last_hybrid_quant_schema_path
 
     def _process_hybrid_quant_config(
         self,
-        args: Namespace,
         model: nn.Module,
     ) -> Dict[str, QuantLayerConfig]:
         cfg = {}
         for name, module in model.named_modules():
             self.update_hybrid_quant_config(
-                args=args, name=name, module=module, cfg=cfg
+                name=name, module=module, cfg=cfg
             )
 
         return cfg
 
     def update_hybrid_quant_config(
         self,
-        args: Namespace,
         name: str,
         module: nn.Module,
         cfg: Dict[str, QuantLayerConfig],
     ) -> None:
-        pattern_cfg = _load_hybrid_quant_config(args)
+        pattern_cfg = self._load_hybrid_quant_config()
 
         if not isinstance(module, nn.Linear) or name in cfg:
             return
@@ -60,12 +55,11 @@ class QuantLayerConfigManager:
         for pattern, rule in pattern_cfg.items():
             if fnmatch.fnmatchcase(name=name, pat=pattern):
                 cfg[name] = _extract_quant_layer_cfg(
-                    rule=rule, name=name, default_group_size=args.quant_group_size
+                    rule=rule, name=name, default_group_size=0
                 )
                 break
         else:
             if self._check_skip_layer(name):
-                # TODO: what about fp32?
                 weight_bits = 16
                 act_bits = 16
                 group_size = 0
@@ -84,7 +78,7 @@ class QuantLayerConfigManager:
                 group_size=group_size,
             )
 
-        _validate_group_size_for_layer(name=name, quant_layer_cfg=cfg[name], args=args)
+        _validate_group_size_for_layer(name=name, quant_layer_cfg=cfg[name])
 
     def _check_skip_layer(self, name: str) -> bool:
         return any(
@@ -136,18 +130,20 @@ class QuantLayerConfigManager:
 
         return layers_quant_mapping
 
+    def _load_hybrid_quant_config(self) -> Dict[str, str]:
+        config = {}
+        if self.last_hybrid_quant_schema_path != "":
+            logger.info(f"loading configs from last hybrid quant schema...")
+            with open(self.last_hybrid_quant_schema_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
 
-def _load_hybrid_quant_config(args: Namespace) -> Dict[str, str]:
-    config = {}
-    if args.hybrid_quant and args.last_hybrid_quant_schema_path != "":
-        with open(args.last_hybrid_quant_schema_path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-    return config
+        return config
 
 
 def _extract_quant_layer_cfg(
-    rule: str, name: str, default_group_size: int
+    rule: str,
+    name: str,
+    default_group_size: int
 ) -> QuantLayerConfig:
     rule = rule.lower()
 
@@ -182,7 +178,8 @@ def _extract_quant_layer_cfg(
 
 
 def _validate_group_size_for_layer(
-    name: str, quant_layer_cfg: QuantLayerConfig, args: Namespace
+    name: str, 
+    quant_layer_cfg: QuantLayerConfig,
 ) -> None:
     weight_bits = quant_layer_cfg.weight_bits
     act_bits = quant_layer_cfg.act_bits
