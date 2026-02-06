@@ -28,6 +28,12 @@ from aqt.sensitivity import (
 )
 
 
+def cleanup_memory():
+    gc.collect()
+    torch.npu.empty_cache()
+    torch.npu.synchronize()
+
+
 def _compute_sensitivity_scores(
     model: nn.Module,
     args: Namespace,
@@ -44,24 +50,22 @@ def _compute_sensitivity_scores(
     layers = model.model.layers
     logger.info(f"This model gets {len(layers)} layers.")
 
-    logger.info(f"Gathering inputs...")
+    logger.info(f"Gathering inputs from Embeddings...")
     model.model.embed_tokens = model.model.embed_tokens.npu()
     model.model.norm = model.model.norm.npu()
     inps, model_cache = catch_model_cache(model=model, layers=layers, calibration_samples=calibration_samples)
-    logger.info(f"{len(inps)}, {inps[0][0].shape}")
+    outs = [None] * samples_num
     model.model.embed_tokens = model.model.embed_tokens.cpu()
     model.model.norm = model.model.norm.cpu()
-
-    torch.npu.empty_cache()
-    torch.npu.synchronize()
+    cleanup_memory()
+    logger.info(f"Inputs gathered.")    
 
     experts_num = getattr(model.config, "num_experts", 0)
     sensitivity_scores = defaultdict(dict)
-    outs = copy.deepcopy(inps)
 
-    for layer_idx, layer in enumerate(layers):
+    for layer_idx, layer in enumerate(layers):  
         layer_idx_str = str(layer_idx)
-        logger.info(f"Processing layer {layer_idx_str}")
+        logger.info(f"Processing layer {layer_idx_str}.")
 
         layer.npu()
 
@@ -69,14 +73,19 @@ def _compute_sensitivity_scores(
         logger.info(f"This layer gets {len(full)} linears.")
         layer_groups = get_layer_sensitivity_group_mapping(experts_num).values()
         subset = {n: full[n] for n in chain.from_iterable(layer_groups) if n in full}
+
         if not subset:
+            layer.cpu()
+            del layer
+            cleanup_memory()
             continue
-        ptq: Dict[str, PostTrainingQuantization] = {}
+
         quant_bits_list = [4, 8]
+        ptq: Dict[str, PostTrainingQuantization] = {}
         for quant_bits in quant_bits_list:
+            logger.info(f"Quantizing to {quant_bits} bits...")
             for name, linear_layer in subset.items():
                 layer_name = f"model.layers.{layer_idx_str}.{name}"
-                # FIXME: quantizer 实现与初始化
                 ptq[name] = PostTrainingQuantization(
                     layer=linear_layer,
                     quant_type=args.quant_type,
@@ -102,20 +111,16 @@ def _compute_sensitivity_scores(
             for name in subset:
                 ptq[name].post_batch()
 
-            flag = True
             for name, module in subset.items():
                 layer_name = f"model.layers.{layer_idx_str}.{name}"
-                if "mlp.experts" not in name:
-                    logger.info(f"Layer {layer_idx_str}: {name} (quant to {quant_bits} bits)")
-                else:
-                    if flag:
-                        logger.info(f"Layer {layer_idx_str}: mlp.experts.* (quant to {quant_bits} bits)")
-                        flag = False
                 losses = ptq[name].run(transform_weights=False)
                 sensitivity_scores[layer_name][quant_bits] = {
                     args.sensitivity_metric: losses[0]
                 }
                 ptq[name].free()
+
+        del ptq
+        cleanup_memory()
 
         for layer_group in layer_groups:
             subset = {n: full[n] for n in layer_group if n in full}
@@ -139,12 +144,10 @@ def _compute_sensitivity_scores(
         inps, outs = outs, inps
         layer.cpu()
         del layer
-        torch.npu.empty_cache()
-        torch.npu.synchronize()
+        cleanup_memory()
 
     del inps, outs, model_cache
-    gc.collect()
-    torch.npu.empty_cache()
+    cleanup_memory()
     model.config.use_cache = use_cache
     # ========================================================================
 
@@ -195,7 +198,6 @@ def main() -> None:
     logger.info("prepare calibration samples successfully!")
 
     with torch.no_grad():
-        seed_everything(args.seed)
         _compute_sensitivity_scores(
             model=model,
             args=args,

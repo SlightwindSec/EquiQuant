@@ -12,7 +12,6 @@ from transformers import AutoTokenizer
 NpIntArrayT = NDArray[np.int_]
 
 
-# FIXME: 校准集处理是否可以与llmcompressor统一
 def prepare_calibration_samples(args: Namespace) -> Tensor:
     already_processed = args.quant_data_path.endswith(".pt")
     if already_processed:
@@ -55,7 +54,7 @@ def prepare_calibration_samples(args: Namespace) -> Tensor:
     return calibration_samples_
 
 
-CHAT_TEMPLATE = "{}"  # TODO: reseved for future
+CHAT_TEMPLATE = "{}"
 
 
 def tokenize_external(

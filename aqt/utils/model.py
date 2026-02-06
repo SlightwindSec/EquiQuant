@@ -48,7 +48,6 @@ def catch_model_cache(
             self.module = module
             # the attr below appeared in transformers >= 4.53 for qwen DecoderLayer
             # and is accessed directly, so we need to make a link to it
-            # TODO: find general solution for any transformers models
             self.attention_type = getattr(self.module, "attention_type", None)
 
         def forward(self, *args, **kwargs):  # noqa
@@ -88,7 +87,7 @@ def catch_model_cache(
     layers[0] = layers[0].module
     layers[0] = layers[0].cpu()
 
-    model_cache = {}  # TODO: add optional offload to CPU?
+    model_cache = {}
     if attention_mask:
         model_cache["attention_mask"] = attention_mask[0]
     if position_ids:

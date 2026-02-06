@@ -91,6 +91,7 @@ def main() -> None:
     parser.add_argument('--sensitivity-metric', required=True, type=str)
     parser.add_argument('--ckpt-size-budget-mb', required=True, type=int)
     parser.add_argument('--hybrid_quant_schema_path', required=True, type=str)
+    parser.add_argument('--hybrid_quant_schema_re_path', required=True, type=str)
     parser.add_argument('--last_hybrid_quant_schema_path', required=True, type=str)
     parser.add_argument('--sensitivity_scores_save_path', required=True, type=str)
     args = parser.parse_args()
@@ -118,12 +119,14 @@ def main() -> None:
     layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping(
         overwrite_act_to_8bit=False
     )
-    hybrid_quant_schema = compress_hybrid_quant_schema(
-        cfg=layers_quant_mapping, experts_num=quant_layer_cfg_mngr.experts_num
+    hybrid_quant_schema, hybrid_quant_schema_re = compress_hybrid_quant_schema(
+        cfg=layers_quant_mapping, experts_num=quant_layer_cfg_mngr.experts_num, layers_num=quant_layer_cfg_mngr.layers_num
     )
     
+    logger.info("Saving hybrid quant config...")
     with open(args.hybrid_quant_schema_path, "w", encoding="utf-8") as f:
-        logger.info("Saving hybrid quant config...")
+        json.dump(hybrid_quant_schema, f, indent=4)
+    with open(args.hybrid_quant_schema_re_path, "w", encoding="utf-8") as f:
         json.dump(hybrid_quant_schema, f, indent=4)
 
 

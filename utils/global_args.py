@@ -68,7 +68,7 @@ class GlobalConfig:
                 f"llmcompressor currently does NOT support multi-card! "
                 f"Please set `quantization_visible_devices` to a single NPU id in config/config.yaml"
             )
-        # FIXME: 校准集判断逻辑修改
+
         calib_data_path = cfg.get("quantization_calib_data_path", "")
         # if quantization_tool == "llmcompressor" and calib_data_path == "":
         #     raise ValueError(
@@ -92,7 +92,6 @@ class GlobalConfig:
             }
             if not normalized['quantization']['template_config']:
                 raise ValueError("`quantization_template_config` must be provided in config/config.yaml.")
-        # FIXME: llmcompressor 配置补全
         elif quantization_tool == "llmcompressor":
             normalized['quantization'] = {
                 'enable_smooth_quant': cfg.get('enable_smooth_quant', False),

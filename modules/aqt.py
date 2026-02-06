@@ -62,7 +62,7 @@ class AutomaticQuantizationTool:
         )
         return cmd
 
-    def compute_sensitivity_scores_only(self):
+    def compute_sensitivity_scores_only(self, flag: bool = True):
         save_dir = os.path.join(self.results_root, self.quant_type, self.metric)
         os.makedirs(save_dir, exist_ok=True)
         self.sensitivity_scores_save_path = os.path.join(save_dir, "sensitivity_scores.json")
@@ -74,16 +74,20 @@ class AutomaticQuantizationTool:
         quant_data_path = os.path.abspath(quant_data_path)
         quant_data_save_path = os.path.join(self.results_root, "calib_data.pt")
         os.makedirs(os.path.dirname(quant_data_save_path), exist_ok=True)
-    
-        compute_sensitivity_scores_cmd = self._compute_sensitivity_scores_cmd(save_dir, quant_data_path, quant_data_save_path)
-        success, stdout, stderr = ShellRunner.run_cmd(compute_sensitivity_scores_cmd, timeout=10800)
-        if not success or not os.path.exists(self.sensitivity_scores_save_path):
-            logger.error("Computing sensitivity scores failed.")
+
+        if flag:
+            compute_sensitivity_scores_cmd = self._compute_sensitivity_scores_cmd(save_dir, quant_data_path, quant_data_save_path)
+            success, stdout, stderr = ShellRunner.run_cmd(compute_sensitivity_scores_cmd, timeout=10800)
+            if not success or not os.path.exists(self.sensitivity_scores_save_path):
+                logger.error("Computing sensitivity scores failed.")
+        else:
+            logger.info("Sensitivity analysis skipped!")
 
     def _run_cmd(
         self,
         budget_mb: int,
         hybrid_quant_schema_path: str,
+        hybrid_quant_schema_re_path: str,
         last_hybrid_quant_schema_path: str,
     ) -> str:
         cmd = (
@@ -94,6 +98,7 @@ class AutomaticQuantizationTool:
             f"--sensitivity-metric {shlex.quote(self.metric)} "
             f"--ckpt-size-budget-mb {budget_mb} "
             f"--hybrid_quant_schema_path {shlex.quote(hybrid_quant_schema_path)} "
+            f"--hybrid_quant_schema_re_path {shlex.quote(hybrid_quant_schema_re_path)} "
             f"--last_hybrid_quant_schema_path {shlex.quote(last_hybrid_quant_schema_path)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
         )
@@ -111,11 +116,12 @@ class AutomaticQuantizationTool:
         save_dir = os.path.join(self.results_root, f"run{run_id:03d}", f"budget_{budget_mb}mb")
         os.makedirs(save_dir, exist_ok=True)
         hybrid_quant_schema_path = os.path.join(save_dir, "hybrid_quant_schema.json")
+        hybrid_quant_schema_re_path = os.path.join(save_dir, "hybrid_quant_schema_re.json")
 
-        run_cmd = self._run_cmd(budget_mb, hybrid_quant_schema_path, last_hybrid_quant_schema_path)
+        run_cmd = self._run_cmd(budget_mb, hybrid_quant_schema_path, hybrid_quant_schema_re_path, last_hybrid_quant_schema_path)
         success, stdout, stderr = ShellRunner.run_cmd(run_cmd, timeout=10800)
         
         if not success:
             logger.error(f"AQT failed to get hybrid quant schema.")
 
-        return hybrid_quant_schema_path
+        return hybrid_quant_schema_path, hybrid_quant_schema_re_path

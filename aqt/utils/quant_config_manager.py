@@ -3,7 +3,7 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Dict, List
+from typing import Dict, List, Tuple
 from utils.logger import logger
 
 from torch import nn
@@ -25,9 +25,10 @@ class QuantLayerConfigManager:
         # "*mlp.gate" is skipped in MoE architecture, carefull with
         # "gate_proj" in self attention, don't add "*" at the end of the pattern
         self.skip_layers = ["*embed_tokens", "*mlp.gate", "*lm_head", "*indexer*"]
-        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(model=model)
         self.experts_num = getattr(model.config, "num_experts", 0)
+        self.layers_num = len(model.model.layers)
         self.last_hybrid_quant_schema_path = last_hybrid_quant_schema_path
+        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(model=model)
 
     def _process_hybrid_quant_config(
         self,
@@ -64,10 +65,6 @@ class QuantLayerConfigManager:
                 act_bits = 16
                 group_size = 0
             else:
-                # FIXME: 硬编码修改
-                # weight_bits = 4
-                # act_bits = 8
-                # group_size = 0 if ".mlp.experts." in name else 64
                 weight_bits = 4 if ".mlp.experts." in name else 8
                 act_bits = 8
                 group_size = 0
@@ -93,7 +90,7 @@ class QuantLayerConfigManager:
     ) -> None:
         layers_quant_mapping = self._create_quant_layers_mapping(overwrite_act_to_8bit)
         output = compress_hybrid_quant_schema(
-            cfg=layers_quant_mapping, experts_num=self.experts_num
+            cfg=layers_quant_mapping, experts_num=self.experts_num, layers_num=self.layers_num,
         )
         with open(save_path, "w", encoding="utf-8") as f:
             logger.info("Saving hybrid quant config...")
@@ -133,7 +130,6 @@ class QuantLayerConfigManager:
     def _load_hybrid_quant_config(self) -> Dict[str, str]:
         config = {}
         if self.last_hybrid_quant_schema_path != "":
-            logger.info(f"loading configs from last hybrid quant schema...")
             with open(self.last_hybrid_quant_schema_path, "r", encoding="utf-8") as f:
                 config = json.load(f)
 
@@ -146,6 +142,12 @@ def _extract_quant_layer_cfg(
     default_group_size: int
 ) -> QuantLayerConfig:
     rule = rule.lower()
+    if rule == "float":
+        return QuantLayerConfig(
+            weight_bits=16,
+            act_bits=16,
+            group_size=0,
+        )        
 
     weight_match = re.search(r"w\d*", rule)
     if weight_match:
@@ -193,20 +195,96 @@ def _validate_group_size_for_layer(
             )
         quant_layer_cfg.group_size = 0
 
+
+def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int) -> Dict[str, str]:
+    layer_pattern = re.compile(r'^(model\.layers\.)([\d\*]+)(\..*)$')
+
+    group_dict: Dict[Tuple[str, str], Dict[str, List[int] | str | None]] = {}
+    for layer_path, q_type in original_dict.items():
+        match = layer_pattern.match(layer_path)
+        if not match:
+            if ("other",) not in group_dict:
+                group_dict[("other",)] = {"paths": {layer_path: q_type}}
+            else:
+                group_dict[("other",)]["paths"][layer_path] = q_type
+            continue
+        
+        prefix, layer_part, suffix = match.groups()
+        group_key = (prefix, suffix)
+
+        if group_key not in group_dict:
+            group_dict[group_key] = {"nums": [], "wildcard_qtype": None}
+
+        if layer_part == "*":
+            group_dict[group_key]["wildcard_qtype"] = q_type
+        elif layer_part.isdigit():
+            group_dict[group_key]["nums"].append(int(layer_part))
+
+    result = {}
+    for group_key, group_info in group_dict.items():
+        if group_key == ("other",):
+            for path, q_type in group_info["paths"].items():
+                reg_path = f"re:{path}" if not path.startswith("re:") else path
+                result[reg_path] = q_type
+            continue
+        
+        prefix, suffix = group_key
+        nums: List[int] = sorted(list(set(group_info["nums"])))
+        wildcard_qtype: str | None = group_info["wildcard_qtype"]
+
+        if nums:
+            num_str = "|".join(map(str, nums))
+            merged_num_path = f"{prefix}({num_str}){suffix}"
+            reg_num_path = f"re:{merged_num_path}" if not merged_num_path.startswith("re:") else merged_num_path
+
+            result[reg_num_path] = original_dict[f"{prefix}{nums[0]}{suffix}"]
+
+        if wildcard_qtype is not None:
+            all_layers = list(range(total_layers + 1))
+            excluded_layers = nums
+            remaining_layers = [x for x in all_layers if x not in excluded_layers]
+
+            if not remaining_layers:
+                continue
+            remaining_str = "|".join(map(str, remaining_layers))
+            merged_wildcard_path = f"{prefix}({remaining_str}){suffix}"
+            reg_wildcard_path = f"re:{merged_wildcard_path}" if not merged_wildcard_path.startswith("re:") else merged_wildcard_path
+            result[reg_wildcard_path] = wildcard_qtype
+
+    return _expand_mlp_experts(result)
+
+
+def _expand_mlp_experts(merged_dict: Dict[str, str]) -> Dict[str, str]:
+    final_dict = {}
+    mlp_suffixes = [".gate_proj", ".up_proj", ".down_proj"]
+    mlp_pattern = re.compile(r're:.*mlp\.experts\.\*$')
+
+    for pattern, quant_schema in merged_dict.items():
+        if mlp_pattern.match(pattern):
+            for suffix in mlp_suffixes:
+                new_pattern = pattern + suffix
+                final_dict[new_pattern] = quant_schema
+        else:
+            final_dict[pattern] = quant_schema
+
+    return final_dict
+
+
 def compress_hybrid_quant_schema(
     cfg: Dict[str, str],
     experts_num: int,
-) -> Dict[str, str]:
+    layers_num: int,
+) -> Tuple[Dict[str, str], Dict[str, str]]:
     # extract layers mapping for pattern and quant_schema inside it
     mapping = {pattern: defaultdict(list) for pattern in TRANSFORMER_LAYER_PATTERNS}
     for layer_name, quant_schema in cfg.items():
         for pattern in TRANSFORMER_LAYER_PATTERNS:
             if fnmatch.fnmatchcase(layer_name, pattern):
+                if pattern != "*":
+                    mapping[pattern][quant_schema].append(layer_name)
                 break
         else:
             raise ValueError
-
-        mapping[pattern][quant_schema].append(layer_name)
 
     # iterate through found mapping and substitute layer names with pattern if possible
     output = {}
@@ -242,8 +320,9 @@ def compress_hybrid_quant_schema(
             output[pattern] = pattern_sorted_quant_schemas[-1]
 
     output = _postprocess_expert_layers(output)
+    output_re = _get_hybrid_quant_schema_re(output, layers_num)
 
-    return output
+    return output, output_re
 
 
 TRANSFORMER_LAYER_PATTERNS = [

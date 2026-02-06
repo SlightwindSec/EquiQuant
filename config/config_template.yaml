@@ -14,10 +14,6 @@ workspace_quant_weights_dir: "quantized_weights"
 strategy_initial_fallback_layers:
   - 'lm_head'
 
-disable_names:
-  - '*kv_b_proj'
-  - '*kv_a_proj*'
-
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
@@ -64,7 +60,6 @@ aisbench_extra_args: null
 vllm_port: 1234
 vllm_env_vars:
   HCCL_BUFFSIZE: 1024
-  # VLLM_VERSION: "0.11.0"
   ASCEND_RT_VISIBLE_DEVICES: "14,15"
   # HCCL_OP_EXPANSION_MODE: "AIV"
 vllm_args:
@@ -73,7 +68,6 @@ vllm_args:
   data-parallel-size: 1
   enable-expert-parallel: true
   async-scheduling: true
-  # quantization: "ascend"
   enable-prefix-caching: false
   max-num-seqs: 64
   max-model-len: 40960
@@ -89,7 +83,6 @@ vllm_args:
 
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)
-# 如果项目根目录存在 automatic-quantization-tool 且未显式关闭，将自动启用。
 # -----------------------------------------------
 aqt_enabled: true
 aqt_results_dir: "workspace/aqt_results"
@@ -108,7 +101,6 @@ aqt_budget_step_down_mb: 250
 aqt_min_budget_mb: 0
 aqt_max_budget_mb: 12000
 
-# FIXME: llmcompressor 参数添加
 # -----------------------------------------------
 # 量化器配置
 # -----------------------------------------------

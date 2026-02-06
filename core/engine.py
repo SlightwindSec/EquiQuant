@@ -155,7 +155,7 @@ class EquiQuantEngine:
         logger.info(f"\n{'='*20} Sensitivity Alalysis (AQT) {'='*20}")
         self.aqt_tool.compute_sensitivity_scores_only()
         if not os.path.exists(self.aqt_tool.sensitivity_scores_save_path):
-            logger.error("Sensitivity_scores_save_path does not exist.")
+            logger.error(f"Sensitivity_scores_save_path: {self.aqt_tool.sensitivity_scores_save_path} does not exist.")
             return
 
         while True:
@@ -168,12 +168,12 @@ class EquiQuantEngine:
 
             try:
                 # Step 1: 调用 AQT 获取量化配置路径
-                hybrid_quant_schema_path = self.aqt_tool.run(
+                hybrid_quant_schema_path, hybrid_quant_schema_re_path = self.aqt_tool.run(
                     run_id=self.run_id,
                     budget_mb=self.current_budget,
                     last_hybrid_quant_schema_path=self.last_hybrid_quant_schema_path,
                 )
-                if not os.path.exists(hybrid_quant_schema_path):
+                if not os.path.exists(hybrid_quant_schema_path) or not os.path.exists(hybrid_quant_schema_re_path):
                     logger.error("AQT failed. Skipping this trial.")
                     break
                 self.last_hybrid_quant_schema_path = hybrid_quant_schema_path
@@ -187,6 +187,7 @@ class EquiQuantEngine:
                     output_config_path=quant_config_path,
                     output_weights_path=quant_weights_path,
                     hybrid_quant_schema_path=hybrid_quant_schema_path,
+                    hybrid_quant_schema_re_path=hybrid_quant_schema_re_path,
                 )
 
                 # Step 3: 量化器量化模型

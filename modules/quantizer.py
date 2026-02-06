@@ -51,6 +51,7 @@ class BaseQuantizer(abc.ABC):
         output_config_path: str,
         output_weights_path: str,
         hybrid_quant_schema_path: str,
+        hybrid_quant_schema_re_path: str,
     ):
         """
         Args:
@@ -60,6 +61,7 @@ class BaseQuantizer(abc.ABC):
             output_config_path (str): 本次运行 modelslim YAML 或 llmcompressor PY脚本的保存路径
             output_weights_path (str): 本次运行量化权重输出路径
             hybrid_quant_schema_path (str): 本次aqt得到的混合量化配置路径
+            hybrid_quant_schema_path (str): 本次aqt得到的混合量化正则化配置路径
         """
         self.config = quant_config
         self.base_model_path = base_model_path
@@ -67,58 +69,21 @@ class BaseQuantizer(abc.ABC):
         self.output_config_path = output_config_path
         self.output_weights_path = output_weights_path
         self.hybrid_quant_schema_path = hybrid_quant_schema_path
+        self.hybrid_quant_schema_re_path = hybrid_quant_schema_re_path
 
         self._generate_quant_config()
 
     @abc.abstractclassmethod
     def _generate_quant_config(self):
         pass
-
+    
+    @abc.abstractclassmethod
     def run(self):
         pass
 
+    @abc.abstractclassmethod
     def _get_quant_config(self):
-        if not os.path.exists(self.hybrid_quant_schema_path):
-            raise FileNotFoundError(f"Hybrid quant schema file not found: {self.hybrid_quant_schema_path}")
-
-        with open(self.hybrid_quant_schema_path) as f:
-            hybrid_quant_schema = json.load(f)
-
-        w4a8_perchannel_cfg = defaultdict(FlowStyleList)
-        w4a8_pergroup_cfg = defaultdict(FlowStyleList)
-        w8a8_cfg = defaultdict(FlowStyleList)
-
-        if hybrid_quant_schema:
-            for pattern, quant_schema in hybrid_quant_schema.items():
-                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
-                    raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
-
-                if pattern in TRANSFORMER_LAYER_PATTERNS:
-                    if quant_schema == "w4a8_dynamic_pergroup":
-                        w4a8_pergroup_cfg["include"].append(pattern)
-                    elif quant_schema == "w8a8_dynamic":
-                        w8a8_cfg["include"].append(pattern)
-                    elif quant_schema == "w4a8_dynamic_perchannel":
-                        raise ValueError(f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel.")
-                else:
-                    if ".mlp.experts.*" in pattern:
-                        if quant_schema == "w8a8_dynamic":
-                            if "layers.*.mlp.experts" not in pattern:
-                                w4a8_perchannel_cfg["exclude"].append(pattern)
-                            w8a8_cfg["include"].append(pattern)
-                        elif quant_schema == "w4a8_dynamic_perchannel":
-                            if "layers.*.mlp.experts" not in pattern:
-                                w8a8_cfg["exclude"].append(pattern)
-                            w4a8_perchannel_cfg["include"].append(pattern)
-                    else:
-                        if quant_schema == "w8a8_dynamic":
-                            w8a8_cfg["include"].append(pattern)
-                            w4a8_pergroup_cfg["exclude"].append(pattern)
-                        elif quant_schema == "w4a8_dynamic_pergroup":
-                            w4a8_pergroup_cfg["include"].append(pattern)
-                            w8a8_cfg["exclude"].append(pattern)
-
-        return w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg
+        pass
 
 
 class ModelslimQuantizer(BaseQuantizer):
@@ -335,8 +300,7 @@ class ModelslimQuantizer(BaseQuantizer):
         except Exception as e:
             logger.error(f"Failed to generate v1 quant config: {e}")
             raise
-    
-    # FIXME: modelslim yaml 填充bug
+
     def _fill_modelslim_yaml(self) -> None:
         with open(self.output_config_path) as f:
             base = yaml.safe_load(f)
@@ -379,6 +343,49 @@ class ModelslimQuantizer(BaseQuantizer):
             logger.error(f"Failed to generate quant config: {e}")
             raise
 
+    def _get_quant_config(self):
+        if not os.path.exists(self.hybrid_quant_schema_path):
+            raise FileNotFoundError(f"Hybrid quant schema file not found: {self.hybrid_quant_schema_path}")
+
+        with open(self.hybrid_quant_schema_path) as f:
+            hybrid_quant_schema = json.load(f)
+
+        w4a8_perchannel_cfg = defaultdict(FlowStyleList)
+        w4a8_pergroup_cfg = defaultdict(FlowStyleList)
+        w8a8_cfg = defaultdict(FlowStyleList)
+
+        if hybrid_quant_schema:
+            for pattern, quant_schema in hybrid_quant_schema.items():
+                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
+                    raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
+
+                if pattern in TRANSFORMER_LAYER_PATTERNS:
+                    if quant_schema == "w4a8_dynamic_pergroup":
+                        w4a8_pergroup_cfg["include"].append(pattern)
+                    elif quant_schema == "w8a8_dynamic":
+                        w8a8_cfg["include"].append(pattern)
+                    elif quant_schema == "w4a8_dynamic_perchannel":
+                        raise ValueError(f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel.")
+                else:
+                    if ".mlp.experts.*" in pattern:
+                        if quant_schema == "w8a8_dynamic":
+                            if "layers.*.mlp.experts" not in pattern:
+                                w4a8_perchannel_cfg["exclude"].append(pattern)
+                            w8a8_cfg["include"].append(pattern)
+                        elif quant_schema == "w4a8_dynamic_perchannel":
+                            if "layers.*.mlp.experts" not in pattern:
+                                w8a8_cfg["exclude"].append(pattern)
+                            w4a8_perchannel_cfg["include"].append(pattern)
+                    else:
+                        if quant_schema == "w8a8_dynamic":
+                            w8a8_cfg["include"].append(pattern)
+                            w4a8_pergroup_cfg["exclude"].append(pattern)
+                        elif quant_schema == "w4a8_dynamic_pergroup":
+                            w4a8_pergroup_cfg["include"].append(pattern)
+                            w8a8_cfg["exclude"].append(pattern)
+
+        return w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg
+
     def run(self):
         """
         执行完整的量化流程。
@@ -412,55 +419,24 @@ class LLMCompressorQuantizer(BaseQuantizer):
     封装 LLMCompressor 量化工具。
     '''
 
-    def _format_dict(self, d: dict, indent: int = 0) -> str:
-        """Format dictionary for clean Python code generation."""
-        lines = ["{"]
-        indent_str = "    " * (indent + 1)
-        
-        for key, value in d.items():
-            if isinstance(value, dict):
-                formatted_value = self._format_dict(value, indent + 1)
-                lines.append(f"{indent_str}{repr(key)}: {formatted_value},")
-            elif isinstance(value, list):
-                if all(isinstance(item, str) for item in value):
-                    lines.append(f"{indent_str}{repr(key)}: {repr(value)},")
-                else:
-                    lines.append(f"{indent_str}{repr(key)}: [")
-                    for item in value:
-                        lines.append(f"{indent_str}    {repr(item)},")
-                    lines.append(f"{indent_str}],")
-            else:
-                lines.append(f"{indent_str}{repr(key)}: {repr(value)},")
-        
-        lines.append("    " * indent + "}")
-        return "\n".join(lines)
-
     def _generate_llmcompressor_config(self) -> None:
-        w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg = self._get_quant_config()
+        targets = self._get_quant_config()
 
-        def add_regex_prefix(patterns):
-            result = []
-            for pattern in patterns:
-                if isinstance(pattern, str):
-                    if not pattern.startswith('re:'):
-                        pattern = f're:{pattern}'
-                    if pattern.endswith("mlp.experts.*"):
-                        for suffix in [".gate_proj", ".up_proj", ".down_proj"]:
-                            result.append(pattern + suffix)
-                    else:
-                        result.append(pattern)
-                else:
-                    result.append(pattern)
-            return result
+        w8a8_targets = targets.get('w8a8_dynamic', [])
+        w4a8_perchannel_targets = targets.get('w4a8_dynamic_perchannel', [])
+        w4a8_pergroup_targets = targets.get('w4a8_dynamic_pergroup', [])
 
-        w8a8_targets = add_regex_prefix(w8a8_cfg.get('include', []))
-        w4a8_perchannel_targets = add_regex_prefix(w4a8_perchannel_cfg.get('include', []))
-        w4a8_pergroup_targets = add_regex_prefix(w4a8_pergroup_cfg.get('include', []))
+        ignores = ['lm_head', 're:.*mlp.gate$', 'model.embed_tokens', 're:.*mlp.shared_expert_gate$']
+    
+        modifier_map = {
+            'AWQ': 'AWQModifier',
+            'PTQ': 'QuantizationModifier',
+            'GPTQ': 'GPTQModifier',
+        }
 
-        default_ignores = ['lm_head', 're:.*mlp.gate$', 'model.embed_tokens', 're:.*mlp.shared_expert_gate$']
-        w8a8_ignores = sorted(list(set(add_regex_prefix(w8a8_cfg.get('exclude', [])) + default_ignores)))
-        w4a8_perchannel_ignores = sorted(list(set(add_regex_prefix(w4a8_perchannel_cfg.get('exclude', [])) + default_ignores)))
-        w4a8_pergroup_ignores = sorted(list(set(add_regex_prefix(w4a8_pergroup_cfg.get('exclude', [])) + default_ignores)))
+        modifier = modifier_map.get(self.config.get('modifier', 'PTQ'), 'QuantizationModifier')
+
+        need_calib_data = modifier != 'QuantizationModifier' or self.config.get('enable_smoothquant', False)
 
         script_lines = []
 
@@ -492,8 +468,6 @@ class LLMCompressorQuantizer(BaseQuantizer):
             "tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)",
             "",
         ])
-        
-        need_calib_data = self.config.get('modifier', 'PTQ') != 'PTQ' or self.config.get('enable_smoothquant', False)
 
         if need_calib_data:
             script_lines.extend([
@@ -533,71 +507,70 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "",
             ])
 
-        script_lines.extend([
-            f"w8a8_targets = {repr(w8a8_targets)}",
-            f"w4a8_perchannel_targets = {repr(w4a8_perchannel_targets)}",
-            f"w4a8_pergroup_targets = {repr(w4a8_pergroup_targets)}",
-            "",
-        ])
+        def _fmt_yaml_list(lst, num: int):
+            if not lst:
+                return "[]"
+            item_indent = " " * (num + 2)
+            items = [f'{item_indent}"{item}"' for item in lst]
+            res = (
+                "[\n" +
+                ",\n".join(items) + "\n" +
+                " " * num + "]"
+            )
+            return res
 
         script_lines.extend([
-            f"default_ignores = {repr(default_ignores)}",
-            "",
-            f"w8a8_ignore = {repr(w8a8_ignores)}",
-            f"w4a8_perchannel_ignore = {repr(w4a8_perchannel_ignores)}",
-            f"w4a8_pergroup_ignore = {repr(w4a8_pergroup_ignores)}",
-            "",
-        ])
-
-        script_lines.extend([
-            'w8a8_dynamic = {',
-            '   "group_0": QuantizationScheme(',
-            '       targets=w8a8_targets,',
-            '       weights=QuantizationArgs(',
-            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.CHANNEL, symmetric=True, dynamic=False',
-            '       ),',
-            '       input_activations=QuantizationArgs(',
-            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
-            '       ),',
-            '   ),',
-            '}',
-            '',
-            'w4a8_dynamic_perchannel = {',
-            '   "group_0": QuantizationScheme(',
-            '       targets=w4a8_perchannel_targets,',
-            '       weights=QuantizationArgs(',
-            '           num_bits=4, type=QuantizationType.INT, strategy=QuantizationStrategy.CHANNEL, symmetric=True, dynamic=False',
-            '       ),',
-            '       input_activations=QuantizationArgs(',
-            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
-            '       ),',
-            '   ),',
-            '}',
-            '',
-            'w4a8_dynamic_pergroup = {',
-            '   "group_0": QuantizationScheme(',
-            '       targets=w4a8_pergroup_targets,',
-            '       weights=QuantizationArgs(',
-            '           num_bits=4, type=QuantizationType.INT, strategy=QuantizationStrategy.GROUP, symmetric=True, dynamic=False, group_size=64',
-            '       ),',
-            '       input_activations=QuantizationArgs(',
-            '           num_bits=8, type=QuantizationType.INT, strategy=QuantizationStrategy.TOKEN, symmetric=True, dynamic=True',
-            '       ),',
-            '   ),',
-            '}'
-        ])
-
-        modifier_map = {
-            'AWQ': 'AWQModifier',
-            'PTQ': 'QuantizationModifier',
-            'GPTQ': 'GPTQModifier',
-        }
-
-        modifier = modifier_map.get(self.config.get('modifier', 'PTQ'), 'QuantizationModifier')
-
-        script_lines.extend([
-            "recipe = []",
-            "",
+            f"recipe = '''",
+            f"quant_stage:",
+            f"    quant_modifiers:",
+            f"        {modifier}:",
+            f"            ignore: {_fmt_yaml_list(ignores, 12)}",
+            f"            config_groups:",
+            f"                group_0:",
+            f"                    weights:",
+            f"                        num_bits: 8",
+            f"                        type: int",
+            f"                        strategy: channel",
+            f"                        dynamic: false",
+            f"                        symmetric: true",
+            f"                    input_activations:",
+            f"                        num_bits: 8",
+            f"                        type: int",
+            f"                        strategy: token",
+            f"                        dynamic: true",
+            f"                        symmetric: true",
+            f"                    targets: {_fmt_yaml_list(w8a8_targets, 20)}",
+            f"                group_1:",
+            f"                    weights:",
+            f"                        num_bits: 4",
+            f"                        type: int",
+            f"                        strategy: channel",
+            f"                        dynamic: false",
+            f"                        symmetric: true",
+            f"                    input_activations:",
+            f"                        num_bits: 8",
+            f"                        type: int",
+            f"                        strategy: token",
+            f"                        dynamic: true",
+            f"                        symmetric: true",
+            f"                    targets: {_fmt_yaml_list(w4a8_perchannel_targets, 20)}",
+            f"                group_2:",
+            f"                    weights:",
+            f"                        num_bits: 4",
+            f"                        type: int",
+            f"                        strategy: group",
+            f"                        group_size: 64",
+            f"                        dynamic: false",
+            f"                        symmetric: true",
+            f"                    input_activations:",
+            f"                        num_bits: 8",
+            f"                        type: int",
+            f"                        strategy: token",
+            f"                        dynamic: true",
+            f"                        symmetric: true",
+            f"                    targets: {_fmt_yaml_list(w4a8_pergroup_targets, 20)}",
+            f"'''",
+            f"",
         ])
 
         if self.config.get('enable_smoothquant', False):
@@ -607,31 +580,6 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "",
             ])
 
-        if w8a8_targets:
-            script_lines.extend([
-                f"recipe.append({modifier}(",
-                "   config_groups=w8a8_dynamic,",
-                "   ignore=w8a8_ignore,",
-                "))",
-                "",
-            ])
-        if w4a8_perchannel_targets:
-            script_lines.extend([
-                f"recipe.append({modifier}(",
-                "   config_groups=w4a8_dynamic_perchannel,",
-                "   ignore=w4a8_perchannel_ignore,",
-                "))",
-                "",
-            ])
-        if w4a8_pergroup_targets:
-            script_lines.extend([
-                f"recipe.append({modifier}(",
-                "   config_groups=w4a8_dynamic_pergroup,",
-                "   ignore=w4a8_pergroup_ignore,",
-                "))",
-                "",
-            ])
-        
         if need_calib_data:
             script_lines.extend([
                 "oneshot(",
@@ -657,13 +605,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "    save_compressed=True,",
                 ")",
                 "",
-                "",
             ])
-        
-        # script_lines.extend([
-        #     "model.save_pretrained(SAVE_DIR, save_compressed=True)",
-        #     "tokenizer.save_pretrained(SAVE_DIR)",
-        # ])
 
         final_script = "\n".join(script_lines)
         
@@ -682,16 +624,43 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 logger.error(f"Failed to generate llmcompressor quantization script: {e}")
                 raise
 
+    def _get_quant_config(self):
+        if not os.path.exists(self.hybrid_quant_schema_re_path):
+            raise FileNotFoundError(f"Hybrid quant schema re file not found: {self.hybrid_quant_schema_re_path}")
+
+        with open(self.hybrid_quant_schema_re_path) as f:
+            hybrid_quant_schema_re = json.load(f)
+
+        targets = defaultdict(FlowStyleList)
+
+        if hybrid_quant_schema_re:
+            for pattern, quant_schema in hybrid_quant_schema_re.items():
+                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
+                    raise ValueError(f"Unsupported quant schema: {quant_schema} for pattern: {pattern}")
+
+                if quant_schema == "w4a8_dynamic_pergroup":
+                    targets["w4a8_dynamic_pergroup"].append(pattern)
+                elif quant_schema == "w8a8_dynamic":
+                    targets["w8a8_dynamic"].append(pattern)
+                elif quant_schema == "w4a8_dynamic_perchannel":
+                    targets["w4a8_dynamic_perchannel"].append(pattern)
+
+        return targets
+
     def run(self):
         """
         执行完整的量化流程。
         """
         logger.info(f"Starting quantization with llmcompressor... Fallback layers: {len(self.fallback_layers)}")
         try:
-            env_prefix = f"export ASCEND_RT_VISIBLE_DEVICES={self.config['visible_devices']}; "
-            cmd = (
-                f"python {self.output_config_path} "
+            env_prefix = (
+                f"export ASCEND_RT_VISIBLE_DEVICES={self.config['visible_devices']}; "
+                # FIXME: set ASCEND_RT_VISIBLE_DEVICES will result in an AssertionError: Torch not compiled with CUDA enabled.
+                # Or you can remove the following code and modify the 'cast_to_device' function of file 'path_to_site-packages/site-packages/compressed_tensors/utils/offload.py'.
+                # replace 'cuda' with 'npu'.
+                f"unset ASCEND_RT_VISIBLE_DEVICES; "
             )
+            cmd = f"python {self.output_config_path} "
             full_cmd = env_prefix + cmd
             success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=10800)
             if not success:
