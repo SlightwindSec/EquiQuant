@@ -28,7 +28,9 @@ class QuantLayerConfigManager:
         self.experts_num = getattr(model.config, "num_experts", 0)
         self.layers_num = len(model.model.layers)
         self.last_hybrid_quant_schema_path = last_hybrid_quant_schema_path
-        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(model=model)
+        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config(
+            model=model
+        )
 
     def _process_hybrid_quant_config(
         self,
@@ -36,9 +38,7 @@ class QuantLayerConfigManager:
     ) -> Dict[str, QuantLayerConfig]:
         cfg = {}
         for name, module in model.named_modules():
-            self.update_hybrid_quant_config(
-                name=name, module=module, cfg=cfg
-            )
+            self.update_hybrid_quant_config(name=name, module=module, cfg=cfg)
 
         return cfg
 
@@ -126,9 +126,7 @@ class QuantLayerConfigManager:
 
 
 def _extract_quant_layer_cfg(
-    rule: str,
-    name: str,
-    default_group_size: int
+    rule: str, name: str, default_group_size: int
 ) -> QuantLayerConfig:
     rule = rule.lower()
     if rule == "float":
@@ -136,7 +134,7 @@ def _extract_quant_layer_cfg(
             weight_bits=16,
             act_bits=16,
             group_size=0,
-        )        
+        )
 
     weight_match = re.search(r"w\d*", rule)
     if weight_match:
@@ -169,7 +167,7 @@ def _extract_quant_layer_cfg(
 
 
 def _validate_group_size_for_layer(
-    name: str, 
+    name: str,
     quant_layer_cfg: QuantLayerConfig,
 ) -> None:
     weight_bits = quant_layer_cfg.weight_bits
@@ -185,8 +183,10 @@ def _validate_group_size_for_layer(
         quant_layer_cfg.group_size = 0
 
 
-def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int) -> Dict[str, str]:
-    layer_pattern = re.compile(r'^(model\.layers\.)([\d\*]+)(\..*)$')
+def _get_hybrid_quant_schema_re(
+    original_dict: Dict[str, str], total_layers: int
+) -> Dict[str, str]:
+    layer_pattern = re.compile(r"^(model\.layers\.)([\d\*]+)(\..*)$")
 
     group_dict: Dict[Tuple[str, str], Dict[str, List[int] | str | None]] = {}
     for layer_path, q_type in original_dict.items():
@@ -197,7 +197,7 @@ def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int
             else:
                 group_dict[("other",)]["paths"][layer_path] = q_type
             continue
-        
+
         prefix, layer_part, suffix = match.groups()
         group_key = (prefix, suffix)
 
@@ -216,7 +216,7 @@ def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int
                 reg_path = f"re:{path}" if not path.startswith("re:") else path
                 result[reg_path] = q_type
             continue
-        
+
         prefix, suffix = group_key
         nums: List[int] = sorted(list(set(group_info["nums"])))
         wildcard_qtype: str | None = group_info["wildcard_qtype"]
@@ -224,12 +224,16 @@ def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int
         if nums:
             num_str = "|".join(map(str, nums))
             merged_num_path = f"{prefix}({num_str}){suffix}"
-            reg_num_path = f"re:{merged_num_path}" if not merged_num_path.startswith("re:") else merged_num_path
+            reg_num_path = (
+                f"re:{merged_num_path}"
+                if not merged_num_path.startswith("re:")
+                else merged_num_path
+            )
 
             result[reg_num_path] = original_dict[f"{prefix}{nums[0]}{suffix}"]
 
         if wildcard_qtype is not None:
-            all_layers = list(range(total_layers + 1))
+            all_layers = list(range(total_layers))
             excluded_layers = nums
             remaining_layers = [x for x in all_layers if x not in excluded_layers]
 
@@ -237,7 +241,11 @@ def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int
                 continue
             remaining_str = "|".join(map(str, remaining_layers))
             merged_wildcard_path = f"{prefix}({remaining_str}){suffix}"
-            reg_wildcard_path = f"re:{merged_wildcard_path}" if not merged_wildcard_path.startswith("re:") else merged_wildcard_path
+            reg_wildcard_path = (
+                f"re:{merged_wildcard_path}"
+                if not merged_wildcard_path.startswith("re:")
+                else merged_wildcard_path
+            )
             result[reg_wildcard_path] = wildcard_qtype
 
     return _expand_mlp_experts(result)
@@ -246,7 +254,7 @@ def _get_hybrid_quant_schema_re(original_dict: Dict[str, str], total_layers: int
 def _expand_mlp_experts(merged_dict: Dict[str, str]) -> Dict[str, str]:
     final_dict = {}
     mlp_suffixes = [".gate_proj", ".up_proj", ".down_proj"]
-    mlp_pattern = re.compile(r're:.*mlp\.experts\.\*$')
+    mlp_pattern = re.compile(r"re:.*mlp\.experts\.\*$")
 
     for pattern, quant_schema in merged_dict.items():
         if mlp_pattern.match(pattern):

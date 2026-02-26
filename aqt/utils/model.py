@@ -19,11 +19,7 @@ def find_layers(
 
     res = {}
     for name1, child in module.named_children():
-        res.update(
-            find_layers(
-                child, name=name + "." + name1 if name != "" else name1
-            )
-        )
+        res.update(find_layers(child, name=name + "." + name1 if name != "" else name1))
     return res
 
 

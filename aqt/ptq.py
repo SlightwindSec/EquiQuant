@@ -9,7 +9,6 @@ from aqt.sensitivity import get_sensitivity_metric, get_linear_output
 
 
 class PostTrainingQuantization:
-
     def __init__(
         self,
         layer: nn.Module,
@@ -34,7 +33,11 @@ class PostTrainingQuantization:
         self.inps = torch.zeros(
             (context_length, self.columns), dtype=torch.float32, device=self.device
         )
-        self.bias = self.layer.bias if hasattr(self.layer, 'bias') and self.layer.bias is not None else None
+        self.bias = (
+            self.layer.bias
+            if hasattr(self.layer, "bias") and self.layer.bias is not None
+            else None
+        )
         self.samples_num = 0
         self.context_length = context_length
 
@@ -43,7 +46,9 @@ class PostTrainingQuantization:
         self.orig_weight = None
         self.dequant_weight = None
 
-        self.quantizer = Quantizer(self.quant_type, self.quant_bits, self.quant_sym, self.group_size)
+        self.quantizer = Quantizer(
+            self.quant_type, self.quant_bits, self.quant_sym, self.group_size
+        )
 
     def add_batch(self, inp: Tensor, out: Tensor) -> None:
         inp = inp[0]
@@ -65,8 +70,7 @@ class PostTrainingQuantization:
         self.orig_weight = self.layer.weight.data.clone()
 
         quant_weight, scale, zero_point = self.quantizer.quantize_weight(
-            weight=self.orig_weight,
-            dtype=self.orig_weight.dtype
+            weight=self.orig_weight, dtype=self.orig_weight.dtype
         )
 
         self.dequant_weight = self.quantizer.dequantize_weight(
@@ -75,7 +79,9 @@ class PostTrainingQuantization:
             zero_point=zero_point,
         )
 
-        self.dequant_weight = self.dequant_weight.to(self.layer.weight.device).to(self.layer.weight.dtype)
+        self.dequant_weight = self.dequant_weight.to(self.layer.weight.device).to(
+            self.layer.weight.dtype
+        )
 
     def run(self, transform_weights: bool = False) -> List[float]:
         tick = time.time()
@@ -89,9 +95,7 @@ class PostTrainingQuantization:
         self.orig_weight = self.orig_weight.to(dtype)
 
         output = get_linear_output(
-            inp=self.inps,
-            weight=self.orig_weight,
-            bias=self.bias
+            inp=self.inps, weight=self.orig_weight, bias=self.bias
         )
         losses = [
             self.sensitivity_metric(

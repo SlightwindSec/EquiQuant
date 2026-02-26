@@ -12,23 +12,30 @@ class AutomaticQuantizationTool:
     2) 基于模板 + 敏感度，输出最终的 modelslim YAML
     """
 
-    def __init__(self, aqt_config: dict, base_model_path: str, workspace: dict, quant_type: str="minmax"):
+    def __init__(
+        self,
+        aqt_config: dict,
+        base_model_path: str,
+        workspace: dict,
+        quant_type: str = "minmax",
+    ):
         self.config = aqt_config or {}
         self.base_model_path = os.path.abspath(base_model_path)
         self.workspace = workspace or {}
         self.quant_type = quant_type
 
-        self.metric = self.config.get('sensitivity_metric', 'mse')
+        self.metric = self.config.get("sensitivity_metric", "mse")
         self.results_root = os.path.abspath(
-            self.config.get('results_dir') or os.path.join(self.workspace.get('base_dir', 'workspace'), "aqt_results")
+            self.config.get("results_dir")
+            or os.path.join(self.workspace.get("base_dir", "workspace"), "aqt_results")
         )
-        self.initial_budget = int(self.config.get('initial_budget_mb', 2500))
-        self.max_budget = int(self.config.get('max_budget_mb', self.initial_budget))
-        self.min_budget = int(self.config.get('min_budget_mb', 0))
-        self.step_up = int(self.config.get('budget_step_mb', 500))
-        self.step_down = int(self.config.get('budget_step_down_mb', self.step_up))
-        self.omp_num_threads = int(self.config.get('omp_num_threads', 32))
-        self.visible_devices = str(self.config.get('ascend_visible_devices', "0"))
+        self.initial_budget = int(self.config.get("initial_budget_mb", 2500))
+        self.max_budget = int(self.config.get("max_budget_mb", self.initial_budget))
+        self.min_budget = int(self.config.get("min_budget_mb", 0))
+        self.step_up = int(self.config.get("budget_step_mb", 500))
+        self.step_down = int(self.config.get("budget_step_down_mb", self.step_up))
+        self.omp_num_threads = int(self.config.get("omp_num_threads", 32))
+        self.visible_devices = str(self.config.get("ascend_visible_devices", "0"))
 
     def increase_budget(self, current: int) -> int:
         return min(current + self.step_up, self.max_budget)
@@ -65,9 +72,11 @@ class AutomaticQuantizationTool:
     def compute_sensitivity_scores_only(self, flag: bool = True):
         save_dir = os.path.join(self.results_root, self.quant_type, self.metric)
         os.makedirs(save_dir, exist_ok=True)
-        self.sensitivity_scores_save_path = os.path.join(save_dir, "sensitivity_scores.json")
+        self.sensitivity_scores_save_path = os.path.join(
+            save_dir, "sensitivity_scores.json"
+        )
 
-        quant_data_path = self.config.get('quant_data_path')
+        quant_data_path = self.config.get("quant_data_path")
         if not quant_data_path:
             logger.error("AQT requires `aqt_quant_data_path` in config.")
             return None
@@ -76,8 +85,12 @@ class AutomaticQuantizationTool:
         os.makedirs(os.path.dirname(quant_data_save_path), exist_ok=True)
 
         if flag:
-            compute_sensitivity_scores_cmd = self._compute_sensitivity_scores_cmd(save_dir, quant_data_path, quant_data_save_path)
-            success, stdout, stderr = ShellRunner.run_cmd(compute_sensitivity_scores_cmd, timeout=10800)
+            compute_sensitivity_scores_cmd = self._compute_sensitivity_scores_cmd(
+                save_dir, quant_data_path, quant_data_save_path
+            )
+            success, stdout, stderr = ShellRunner.run_cmd(
+                compute_sensitivity_scores_cmd, timeout=10800
+            )
             if not success or not os.path.exists(self.sensitivity_scores_save_path):
                 logger.error("Computing sensitivity scores failed.")
         else:
@@ -105,22 +118,28 @@ class AutomaticQuantizationTool:
         return cmd
 
     def run(
-        self,
-        run_id: int,
-        budget_mb: int,
-        last_hybrid_quant_schema_path: str = ""
+        self, run_id: int, budget_mb: int, last_hybrid_quant_schema_path: str = ""
     ) -> str:
         """
         运行 AQT 获取敏感度分析得到的量化配置。
         """
-        save_dir = os.path.join(self.results_root, f"run{run_id:03d}", f"budget_{budget_mb}mb")
+        save_dir = os.path.join(
+            self.results_root, f"run{run_id:03d}", f"budget_{budget_mb}mb"
+        )
         os.makedirs(save_dir, exist_ok=True)
         hybrid_quant_schema_path = os.path.join(save_dir, "hybrid_quant_schema.json")
-        hybrid_quant_schema_re_path = os.path.join(save_dir, "hybrid_quant_schema_re.json")
+        hybrid_quant_schema_re_path = os.path.join(
+            save_dir, "hybrid_quant_schema_re.json"
+        )
 
-        run_cmd = self._run_cmd(budget_mb, hybrid_quant_schema_path, hybrid_quant_schema_re_path, last_hybrid_quant_schema_path)
+        run_cmd = self._run_cmd(
+            budget_mb,
+            hybrid_quant_schema_path,
+            hybrid_quant_schema_re_path,
+            last_hybrid_quant_schema_path,
+        )
         success, stdout, stderr = ShellRunner.run_cmd(run_cmd, timeout=10800)
-        
+
         if not success:
             logger.error(f"AQT failed to get hybrid quant schema.")
 

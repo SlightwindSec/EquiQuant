@@ -11,8 +11,14 @@ class ShellRunner:
         logger.info(f"Executing: {cmd}")
         try:
             result = subprocess.run(
-                cmd, shell=True, capture_output=True, text=True, timeout=timeout,
-                executable='/bin/bash', encoding='utf-8', errors='replace'
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                executable="/bin/bash",
+                encoding="utf-8",
+                errors="replace",
             )
             if result.returncode != 0:
                 logger.error(f"Command failed: {result.stderr}")
@@ -24,16 +30,22 @@ class ShellRunner:
 
 class AsyncProcess:
     """用于管理 vllm 这种需要长期运行的服务进程"""
+
     def __init__(self, cmd, log_file):
         self.cmd = cmd
         self.process = None
-        self.log_file = open(log_file, 'w')
+        self.log_file = open(log_file, "w")
 
     def start(self):
         logger.info(f"Starting Async Process: {self.cmd}")
         # 使用 preexec_fn=os.setsid 创建新的进程组，方便后续能够杀掉整个进程树
         self.process = subprocess.Popen(
-            self.cmd, shell=True, stdout=self.log_file, stderr=subprocess.STDOUT, preexec_fn=os.setsid, executable='/bin/bash'
+            self.cmd,
+            shell=True,
+            stdout=self.log_file,
+            stderr=subprocess.STDOUT,
+            preexec_fn=os.setsid,
+            executable="/bin/bash",
         )
 
     def stop(self):
@@ -48,5 +60,5 @@ class AsyncProcess:
                 try:
                     os.killpg(os.getpgid(self.process.pid), signal.SIGKILL)
                 except:
-                    pass # 进程可能已经不在了
+                    pass  # 进程可能已经不在了
         self.log_file.close()

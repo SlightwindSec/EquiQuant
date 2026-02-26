@@ -35,9 +35,7 @@ def cleanup_memory():
 
 
 def _compute_sensitivity_scores(
-    model: nn.Module,
-    args: Namespace,
-    calibration_samples: Tensor
+    model: nn.Module, args: Namespace, calibration_samples: Tensor
 ) -> None:
     logger.info("Computing sensitivity scores...")
     # ========================================================================
@@ -50,20 +48,22 @@ def _compute_sensitivity_scores(
     layers = model.model.layers
     logger.info(f"This model gets {len(layers)} layers.")
 
-    logger.info(f"Gathering inputs from Embeddings...")
+    logger.info("Gathering inputs from Embeddings...")
     model.model.embed_tokens = model.model.embed_tokens.npu()
     model.model.norm = model.model.norm.npu()
-    inps, model_cache = catch_model_cache(model=model, layers=layers, calibration_samples=calibration_samples)
+    inps, model_cache = catch_model_cache(
+        model=model, layers=layers, calibration_samples=calibration_samples
+    )
     outs = [None] * samples_num
     model.model.embed_tokens = model.model.embed_tokens.cpu()
     model.model.norm = model.model.norm.cpu()
     cleanup_memory()
-    logger.info(f"Inputs gathered.")    
+    logger.info("Inputs gathered.")
 
     experts_num = getattr(model.config, "num_experts", 0)
     sensitivity_scores = defaultdict(dict)
 
-    for layer_idx, layer in enumerate(layers):  
+    for layer_idx, layer in enumerate(layers):
         layer_idx_str = str(layer_idx)
         logger.info(f"Processing layer {layer_idx_str}.")
 
@@ -99,12 +99,19 @@ def _compute_sensitivity_scores(
             def add_batch(name_: str):
                 def tmp(_, inp, out):
                     ptq[name_].add_batch(inp, out)
+
                 return tmp
 
             handles = [m.register_forward_hook(add_batch(n)) for n, m in subset.items()]
 
             for j in range(samples_num):
-                res = layer(*inps[j], **{k: v[j] if isinstance(v, list) else v for k, v in model_cache.items()})
+                res = layer(
+                    *inps[j],
+                    **{
+                        k: v[j] if isinstance(v, list) else v
+                        for k, v in model_cache.items()
+                    },
+                )
                 outs[j] = res if isinstance(res, tuple) else (res,)
             for h in handles:
                 h.remove()
@@ -130,7 +137,11 @@ def _compute_sensitivity_scores(
             for name in subset:
                 layer_name = f"model.layers.{layer_idx_str}.{name}"
                 ratio_scores = [
-                    sensitivity_scores[layer_name][4][args.sensitivity_metric] / (sensitivity_scores[layer_name][8][args.sensitivity_metric] + 1e-9)
+                    sensitivity_scores[layer_name][4][args.sensitivity_metric]
+                    / (
+                        sensitivity_scores[layer_name][8][args.sensitivity_metric]
+                        + 1e-9
+                    )
                 ]
                 subset_scores = [max(subset_scores[0], ratio_scores[0])]
 
@@ -173,16 +184,16 @@ def _compute_sensitivity_scores(
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument('--model-name-or-path', required=True, type=str)
-    parser.add_argument('--seed', required=True, type=int)
-    parser.add_argument('--quant-data-path', required=True, type=str)
-    parser.add_argument('--quant-data-save-path', required=True, type=str)
-    parser.add_argument('--quant-samples-num', required=True, type=int)
-    parser.add_argument('--quant-context-length', required=True, type=int)
-    parser.add_argument('--quant-type', required=True, type=str)
-    parser.add_argument('--sensitivity-metric', required=True, type=str)
-    parser.add_argument('--save-dir', required=True, type=str)
-    parser.add_argument('--sensitivity_scores_save_path', required=True, type=str)
+    parser.add_argument("--model-name-or-path", required=True, type=str)
+    parser.add_argument("--seed", required=True, type=int)
+    parser.add_argument("--quant-data-path", required=True, type=str)
+    parser.add_argument("--quant-data-save-path", required=True, type=str)
+    parser.add_argument("--quant-samples-num", required=True, type=int)
+    parser.add_argument("--quant-context-length", required=True, type=int)
+    parser.add_argument("--quant-type", required=True, type=str)
+    parser.add_argument("--sensitivity-metric", required=True, type=str)
+    parser.add_argument("--save-dir", required=True, type=str)
+    parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
     args = parser.parse_args()
 
     model = AutoModelForCausalLM.from_pretrained(
