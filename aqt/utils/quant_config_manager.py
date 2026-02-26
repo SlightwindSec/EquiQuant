@@ -84,17 +84,6 @@ class QuantLayerConfigManager:
 
     def get_group_size(self, name: str) -> int:
         return self.cfg[name].group_size
-    
-    def save_hybrid_quant_cfg(
-        self, save_path: str, overwrite_act_to_8bit: bool = False
-    ) -> None:
-        layers_quant_mapping = self._create_quant_layers_mapping(overwrite_act_to_8bit)
-        output = compress_hybrid_quant_schema(
-            cfg=layers_quant_mapping, experts_num=self.experts_num, layers_num=self.layers_num,
-        )
-        with open(save_path, "w", encoding="utf-8") as f:
-            logger.info("Saving hybrid quant config...")
-            json.dump(output, f, indent=4)
 
     def _create_quant_layers_mapping(
         self, overwrite_act_to_8bit: bool = False

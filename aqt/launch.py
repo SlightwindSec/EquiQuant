@@ -127,7 +127,7 @@ def main() -> None:
     with open(args.hybrid_quant_schema_path, "w", encoding="utf-8") as f:
         json.dump(hybrid_quant_schema, f, indent=4)
     with open(args.hybrid_quant_schema_re_path, "w", encoding="utf-8") as f:
-        json.dump(hybrid_quant_schema, f, indent=4)
+        json.dump(hybrid_quant_schema_re, f, indent=4)
 
 
 if __name__ == "__main__":

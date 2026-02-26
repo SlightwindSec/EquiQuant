@@ -211,3 +211,5 @@ kernel_meta/
 fusion_result.json
 features.npy
 config.yaml
+tmp
+outputs

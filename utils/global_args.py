@@ -16,7 +16,6 @@ DEFAULT_VLLM_ARGS = {
     "trust-remote-code": True,
     "tensor-parallel-size": 2,
     "data-parallel-size": 1,
-    "quantization": "ascend",
     "enable-prefix-caching": False,
     "max-model-len": 8192,
     "max-num-batched-tokens": 8192,

@@ -60,7 +60,7 @@ aisbench_extra_args: null
 vllm_port: 1234
 vllm_env_vars:
   HCCL_BUFFSIZE: 1024
-  ASCEND_RT_VISIBLE_DEVICES: "14,15"
+  ASCEND_RT_VISIBLE_DEVICES: "0,1"
   # HCCL_OP_EXPANSION_MODE: "AIV"
 vllm_args:
   trust-remote-code: true
@@ -87,7 +87,7 @@ vllm_args:
 aqt_enabled: true
 aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
-aqt_ascend_visible_devices: "14"
+aqt_ascend_visible_devices: "0"
 # 校准集
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
 aqt_quant_samples_num: 128
@@ -115,7 +115,7 @@ aqt_max_budget_mb: 12000
 # max_sequence_length: 2048
 # quantization_modifier: "PTQ"
 quantization_tool: "msmodelslim"
-quantization_visible_devices: "15"
+quantization_visible_devices: "1"
 quantization_model_type: "Qwen3-30B"
 quantization_device: "npu"
 quantization_trust_remote_code: true
