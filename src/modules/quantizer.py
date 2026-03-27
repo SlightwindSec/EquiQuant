@@ -79,10 +79,6 @@ class BaseQuantizer(abc.ABC):
     def run(self):
         pass
 
-    @abc.abstractclassmethod
-    def _get_quant_config(self):
-        pass
-
 
 class ModelslimQuantizer(BaseQuantizer):
     """

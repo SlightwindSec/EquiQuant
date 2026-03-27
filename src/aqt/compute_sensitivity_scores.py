@@ -50,6 +50,8 @@ def _compute_sensitivity_scores(
 
     sensitivity_scores = {}
     sensitivity_metrics = args.sensitivity_metrics.split(",")
+    logger.info(f"Computing sensitivity scores for {sensitivity_metrics}...")
+
     layer_iter = adapter.generate_decoder_layers(model) if adapter else enumerate(layers)
 
     for layer_idx, layer in layer_iter:

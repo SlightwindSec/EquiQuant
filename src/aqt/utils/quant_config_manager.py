@@ -148,21 +148,22 @@ def _sort_mapping(mapping: Dict[str, Dict[str, List[str]]]) -> Dict[str, Dict[st
     return sorted_mapping
 
 
-def compress_hybrid_quant_schema(cfg: Dict[str, str],) -> Tuple[Dict[str, str], Dict[str, str]]:
+def compress_hybrid_quant_schema(cfg: Dict[str, str], is_mm: bool = False) -> Tuple[Dict[str, str], Dict[str, str]]:
     mapping = {}
     layer_mapping = get_layer_sensitivity_group_mapping()
     for layer_name, quant_schema in cfg.items():
         subset_names = get_subset_layer_names(layer_name, layer_mapping)
         for subset_name in subset_names:
             for pattern in TRANSFORMER_LAYER_PATTERNS:
-                if fnmatch.fnmatchcase(subset_name, pattern):
-                    if pattern == "*":
+                pattern_ = pattern.replace("model.layers", "model.language_model.layers") if is_mm else pattern
+                if fnmatch.fnmatchcase(subset_name, pattern_):
+                    if pattern_ == "*":
                         continue
-                    if pattern not in mapping:
-                        mapping[pattern] = {}
-                    if quant_schema not in mapping[pattern]:
-                        mapping[pattern][quant_schema] = []
-                    mapping[pattern][quant_schema].append(subset_name)
+                    if pattern_ not in mapping:
+                        mapping[pattern_] = {}
+                    if quant_schema not in mapping[pattern_]:
+                        mapping[pattern_][quant_schema] = []
+                    mapping[pattern_][quant_schema].append(subset_name)
                     break
             else:
                 raise ValueError(f"Layer {subset_name} not found in any pattern")

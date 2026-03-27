@@ -116,6 +116,8 @@ class AutomaticQuantizationTool:
             f"--hybrid_quant_schema_re_path {shlex.quote(hybrid_quant_schema_re_path)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
         )
+        if self.config.get('is_mm', False):
+            cmd += "--is-mm "
         return cmd
 
     def run(

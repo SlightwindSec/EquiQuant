@@ -50,6 +50,8 @@ def main() -> None:
     parser.add_argument("--hybrid_quant_schema_path", required=True, type=str)
     parser.add_argument("--hybrid_quant_schema_re_path", required=True, type=str)
     parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
+    parser.add_argument("--is-mm", action="store_true")
+
     args = parser.parse_args()
 
     with open(args.sensitivity_scores_save_path, "r", encoding="utf-8") as f:
@@ -73,7 +75,7 @@ def main() -> None:
 
     layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping()
 
-    hybrid_quant_schema, hybrid_quant_schema_re = compress_hybrid_quant_schema(layers_quant_mapping)
+    hybrid_quant_schema, hybrid_quant_schema_re = compress_hybrid_quant_schema(layers_quant_mapping, is_mm=args.is_mm)
 
     logger.info("Saving hybrid quant config...")
     with open(args.hybrid_quant_schema_path, "w", encoding="utf-8") as f:

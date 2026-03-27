@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from ..utils.common import cleanup_memory
+from ...utils.logger import logger
 from transformers.models.qwen3_moe.modeling_qwen3_moe import (
     Qwen3MoeMLP,
     Qwen3MoeTopKRouter,
@@ -64,6 +65,7 @@ def convert_experts_to_mlp(
 
 
 def convert_qwen3_moe(model):
+    logger.info("Converting experts to mlp for qwen3_moe...")
     for i, layer in enumerate(model.layers[: model.config.num_hidden_layers]):
         original_mlp = layer.mlp
         layer.mlp = convert_experts_to_mlp(original_mlp, model.config)
