@@ -47,11 +47,7 @@ def prepare_calibration_samples(args: Namespace) -> Tensor:
     calibration_samples = calibration_samples[
         torch.tensor(idxes), : args.quant_context_length
     ]
-    calibration_samples_: List[Tensor] = [
-        sample.unsqueeze(0) for sample in calibration_samples
-    ]
-
-    return calibration_samples_
+    return calibration_samples
 
 
 CHAT_TEMPLATE = "{}"

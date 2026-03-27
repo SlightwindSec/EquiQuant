@@ -1,5 +1,5 @@
-base_model_path: "/home/weight/Qwen3-30B-A3B"
-is_mm: false
+base_model_path: "/home/weight/Qwen3.5-35B-A3B"
+is_mm: true
 is_deepseek_v32: false
 
 # -----------------------------------------------
@@ -26,27 +26,26 @@ evaluation_datasets:
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
-    target_accuracy: 90.0
+    target_accuracy: 83.33
     tolerance_ratio: 6.67
     metric_keys:
       - "aime2024_accuracy"
   aime2025:
     config_name: "aime2025_gen"
     mode: "all"
-    target_accuracy: 70.0
+    target_accuracy: 80.0
     tolerance_ratio: 3.34
     metric_keys:
       - "aime2025_accuracy"
   gpqa:
     config_name: "gpqa_gen_0_shot_cot_chat_prompt"
     mode: "all"
-    target_accuracy: 61.62
-
+    target_accuracy: 82.83
 
 aisbench_timeout: 7200
 aisbench_request_rate: 0
 aisbench_retry: 2
-aisbench_batch_size: 128
+aisbench_batch_size: 64
 aisbench_max_out_len: 32768
 aisbench_pred_postprocessor: "extract_non_reasoning_content"
 aisbench_generation_kwargs:
@@ -90,17 +89,19 @@ vllm_args:
   enable-expert-parallel: true
   async-scheduling: true
   enable-prefix-caching: false
-  max-num-seqs: 128
+  max-num-seqs: 64
+  allowed-local-media-path: "/"
   max-model-len: 40960
   max-num-batched-tokens: 16384
-  gpu-memory-utilization: 0.9
+  gpu-memory-utilization: 0.55
   additional-config:
     ascend_scheduler_config:
       enabled: false
     enable_cpu_binding: true
+    multistream_overlap_shared_expert: true
   compilation-config:
     cudagraph_mode: "FULL_DECODE_ONLY"
-    cudagraph_capture_sizes: [1,2,4,8,16,32,64,128]
+    cudagraph_capture_sizes: [1,2,4,8,16,32,64]
 
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)
@@ -114,13 +115,13 @@ aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集�
 aqt_quant_samples_num: 32
 aqt_quant_context_length: 2048
 # 敏感度指标
-aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]
+aqt_sensitivity_metric: ["mse", "cosine", "relative_l2", "kl_div"]
 # 回退预算
 aqt_initial_budget_mb: 0
 aqt_budget_step_mb: 200
 aqt_budget_step_down_mb: 100
 aqt_min_budget_mb: 0
-aqt_max_budget_mb: 2000
+aqt_max_budget_mb: 2500
 
 # -----------------------------------------------
 # 量化器配置
@@ -137,7 +138,7 @@ aqt_max_budget_mb: 2000
 # quantization_modifier: "PTQ"
 quantization_tool: "msmodelslim"
 quantization_visible_devices: "1"
-quantization_model_type: "Qwen3-30B"
+quantization_model_type: "Qwen3.5-35B-A3B"
 quantization_device: "npu"
 quantization_trust_remote_code: true
 
@@ -148,7 +149,7 @@ quantization_template_config:
 
   v1:
     metadata:
-      config_id: qwen3-moe-w4a8-v1
+      config_id: qwen3.5-moe-w4a8-v1
       score: 90
       label:
         is_sparse: false
@@ -179,26 +180,13 @@ quantization_template_config:
           symmetric: true
           method: "ssz"
 
-      # default_w4a8_dynamic_pergroup:
-      #   act:
-      #     scope: "per_token"
-      #     dtype: "int8"
-      #     symmetric: true
-      #     method: "minmax"
-      #   weight:
-      #     scope: "per_group"
-      #     dtype: "int4"
-      #     symmetric: true
-      #     method: "ssz"
-      #     ext:
-      #       group_size: 64
-
     process:
       - type: "quarot"
       - type: "flex_smooth_quant"
         enable_subgraph_type:
           - 'norm-linear'
           - 'ov'
+          - 'up-down'
         include:
           - "*"
       - type: "group"
@@ -207,8 +195,6 @@ quantization_template_config:
             qconfig_ref: "default_w4a8_dynamic_perchannel"
           - type: "linear_quant"
             qconfig_ref: "default_w8a8_dynamic"
-          # - type: "linear_quant"
-          #   qconfig_ref: "default_w4a8_dynamic_pergroup"
 
     save:
       - type: "ascendv1_saver"

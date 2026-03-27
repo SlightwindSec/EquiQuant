@@ -1,133 +1,79 @@
 import json
 import argparse
 from utils.logger import logger
-
-import torch
-import torch_npu
-from torch import nn
-
-from transformers import AutoModelForCausalLM
+import os
 
 from aqt.utils.quant_config_manager import (
     QuantLayerConfigManager,
     compress_hybrid_quant_schema,
 )
-from aqt.sensitivity import (
-    get_layer_sensitivity_group_mapping,
-    get_subset_layer_names,
-)
-
-
-MEGABYTE_SIZE = 1024**2
 
 
 def update_quant_layer_cfg(
-    model: nn.Module,
     quant_layer_cfg_mngr: QuantLayerConfigManager,
-    score_name: str,
     ckpt_size_budget_mb: int,
-    sensitivity_scores_save_path: str,
+    sensitivity_scores: dict,
 ) -> None:
-    with open(sensitivity_scores_save_path) as f:
-        sensitivity_scores = json.load(f)
-    experts_num = getattr(model.config, "num_experts", 0)
-    layers_mapping = get_layer_sensitivity_group_mapping(experts_num)
     layer_score_info = []
-    seen_layers = set()
-    for name, bit_mapping in sensitivity_scores.items():
-        for layer_subset, layer_names in layers_mapping.items():
-            if not layer_names:
-                continue
-
-            if layer_names[0] in name and name not in seen_layers:
-                score = bit_mapping["ratio"][score_name]
-                layer_type = name.replace(layer_names[0], layer_subset)
-                layer_score_info.append((score, layer_type))
-
-                subset_names = get_subset_layer_names(
-                    subset_name=layer_type, layers_mapping=layers_mapping
-                )
-                for subset_name in subset_names:
-                    seen_layers.add(subset_name)
-
-    layer_score_info.sort(reverse=True)
+    for name, mapping in sensitivity_scores.items():
+        score = mapping.get("gold", 0.0)
+        layer_score_info.append((score, name))
+    layer_score_info.sort(reverse=True, key=lambda x: x[0])
 
     curr_ckpt_diff = 0
     layer_num = 0
-    bit_mapping_cfg = {"lower": 4, "upper": 8, "bytes_per_param": 0.5}
-
-    ckpt_size_budget_mb = ckpt_size_budget_mb * MEGABYTE_SIZE
-    skipped = []
     while curr_ckpt_diff < ckpt_size_budget_mb and layer_num < len(layer_score_info):
         subset_name = layer_score_info[layer_num][1]
         layer_num += 1
-        if ".experts" not in subset_name:
-            continue
 
-        weight_size = 0
-        layer_names = get_subset_layer_names(subset_name, layers_mapping)
-        for layer_name in layer_names:
-            n_elements = sensitivity_scores[layer_name]["size"]
-            weight_size += n_elements * bit_mapping_cfg["bytes_per_param"]
+        subset_data = sensitivity_scores.get(subset_name, {})
+        if "mlp.experts" in subset_name:
+            weight_size = subset_data.get("4-bit", {}).get("size", 0)
+        else:
+            weight_size = subset_data.get("8-bit", {}).get("size", 0)
 
         if curr_ckpt_diff + weight_size <= ckpt_size_budget_mb:
             curr_ckpt_diff += weight_size
-            for layer_name in layer_names:
-                quant_layer_cfg_mngr.cfg[layer_name].weight_bits = bit_mapping_cfg[
-                    "upper"
-                ]
-        else:
-            skipped.append(subset_name)
-
-    for subset_name in skipped:
-        layer_names = get_subset_layer_names(subset_name, layers_mapping)
-        for layer_name in layer_names:
-            quant_layer_cfg_mngr.cfg[layer_name].weight_bits = bit_mapping_cfg["lower"]
+            if subset_name not in quant_layer_cfg_mngr.cfg:
+                continue
+            if "mlp.experts" in subset_name:
+                quant_layer_cfg_mngr.cfg[subset_name].weight_bits = 8
+            else:
+                quant_layer_cfg_mngr.cfg[subset_name].weight_bits = 16
+                quant_layer_cfg_mngr.cfg[subset_name].act_bits = 16
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name-or-path", required=True, type=str)
-    parser.add_argument("--sensitivity-metric", required=True, type=str)
     parser.add_argument("--ckpt-size-budget-mb", required=True, type=int)
     parser.add_argument("--hybrid_quant_schema_path", required=True, type=str)
     parser.add_argument("--hybrid_quant_schema_re_path", required=True, type=str)
-    parser.add_argument("--last_hybrid_quant_schema_path", required=True, type=str)
     parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
     args = parser.parse_args()
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path,
-        trust_remote_code=True,
-        torch_dtype="auto",
-        device_map="cpu",
-        local_files_only=True,
+    with open(args.sensitivity_scores_save_path, "r", encoding="utf-8") as f:
+        sensitivity_scores: dict = json.load(f)
+
+    config_path = os.path.join(args.model_name_or_path, "config.json")
+    with open(config_path, "r", encoding="utf-8") as f:
+        config = json.load(f)
+    if isinstance(config, dict) and "text_config" in config:
+        config = config["text_config"]
+    num_experts = config.get("num_experts", config.get("n_routed_experts", 0))
+    num_layers = config.get("num_hidden_layers")
+
+    quant_layer_cfg_mngr = QuantLayerConfigManager(layer_names=sensitivity_scores.keys(), num_experts=num_experts, num_layers=num_layers)
+
+    update_quant_layer_cfg(
+        quant_layer_cfg_mngr=quant_layer_cfg_mngr,
+        ckpt_size_budget_mb=args.ckpt_size_budget_mb,
+        sensitivity_scores=sensitivity_scores,
     )
 
-    quant_layer_cfg_mngr = QuantLayerConfigManager(
-        model=model, last_hybrid_quant_schema_path=args.last_hybrid_quant_schema_path
-    )
+    layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping()
 
-    if args.last_hybrid_quant_schema_path != "":
-        logger.info(
-            f"last_hybrid_quant_schema_path: {args.last_hybrid_quant_schema_path}"
-        )
-        update_quant_layer_cfg(
-            model=model,
-            quant_layer_cfg_mngr=quant_layer_cfg_mngr,
-            score_name=args.sensitivity_metric,
-            ckpt_size_budget_mb=args.ckpt_size_budget_mb,
-            sensitivity_scores_save_path=args.sensitivity_scores_save_path,
-        )
-
-    layers_quant_mapping = quant_layer_cfg_mngr._create_quant_layers_mapping(
-        overwrite_act_to_8bit=False
-    )
-    hybrid_quant_schema, hybrid_quant_schema_re = compress_hybrid_quant_schema(
-        cfg=layers_quant_mapping,
-        experts_num=quant_layer_cfg_mngr.experts_num,
-        layers_num=quant_layer_cfg_mngr.layers_num,
-    )
+    hybrid_quant_schema, hybrid_quant_schema_re = compress_hybrid_quant_schema(layers_quant_mapping)
 
     logger.info("Saving hybrid quant config...")
     with open(args.hybrid_quant_schema_path, "w", encoding="utf-8") as f:

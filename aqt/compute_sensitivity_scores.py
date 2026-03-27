@@ -1,15 +1,10 @@
-import copy
-import gc
 import json
 import argparse
 from argparse import Namespace
-from collections import defaultdict
-from itertools import chain
-from typing import Dict
+from typing import Dict, Any
 from utils.logger import logger
 
 import torch
-import torch_npu
 from torch import Tensor, nn
 
 from transformers import AutoModelForCausalLM
@@ -20,50 +15,44 @@ from aqt.utils.model import (
 )
 from aqt.ptq import PostTrainingQuantization
 from aqt.utils.data import prepare_calibration_samples
-from aqt.utils.common import seed_everything
+from aqt.utils.common import seed_everything, cleanup_memory
+from aqt.moe_utils import NEED_CONVERT_MOE, CONVERT_MOE_FUNC
 from aqt.sensitivity import (
-    analyze_sensitivity_scores,
     get_layer_sensitivity_group_mapping,
-    show_diff_between_bits,
+    calculate_losses,
+    plot_all_visuals,
 )
 
 
-def cleanup_memory():
-    gc.collect()
-    torch.npu.empty_cache()
-    torch.npu.synchronize()
+def _calculate_weight_size(linears: Dict[str, nn.Linear]) -> int:
+    return sum(linear.weight.numel() for linear in linears.values()) / 1024 / 1024
 
 
 def _compute_sensitivity_scores(
-    model: nn.Module, args: Namespace, calibration_samples: Tensor
+    model: nn.Module, args: Namespace, input_ids: Tensor, adapter: Any = None
 ) -> None:
     logger.info("Computing sensitivity scores...")
     # ========================================================================
-    samples_num = len(calibration_samples)
-    model.eval()
-    model.cpu()
-
-    use_cache = model.config.use_cache
-    model.config.use_cache = False
+    if adapter is None:
+        use_cache = model.config.use_cache
+        model.config.use_cache = False
     layers = model.model.layers
     logger.info(f"This model gets {len(layers)} layers.")
 
     logger.info("Gathering inputs from Embeddings...")
-    model.model.embed_tokens = model.model.embed_tokens.npu()
-    model.model.norm = model.model.norm.npu()
-    inps, model_cache = catch_model_cache(
-        model=model, layers=layers, calibration_samples=calibration_samples
-    )
-    outs = [None] * samples_num
-    model.model.embed_tokens = model.model.embed_tokens.cpu()
-    model.model.norm = model.model.norm.cpu()
-    cleanup_memory()
+    inps, model_cache = catch_model_cache(model=model, input_ids=input_ids)
+    logger.info(f"inps shape: {inps[0].shape}")
     logger.info("Inputs gathered.")
 
-    experts_num = getattr(model.config, "num_experts", 0)
-    sensitivity_scores = defaultdict(dict)
+    num_experts = model.config.get("num_experts", model.config.get("n_routed_experts", 0))
+    num_layers = model.config.get("num_hidden_layers")
+    prefix = "model.language_model.layers" if args.is_mm else "model.layers"
 
-    for layer_idx, layer in enumerate(layers):
+    sensitivity_scores = {}
+    sensitivity_metrics = args.sensitivity_metrics.split(",")
+    layer_iter = adapter.generate_decoder_layers(model) if adapter else enumerate(layers)
+
+    for layer_idx, layer in layer_iter:
         layer_idx_str = str(layer_idx)
         logger.info(f"Processing layer {layer_idx_str}.")
 
@@ -71,8 +60,14 @@ def _compute_sensitivity_scores(
 
         full = find_layers(layer)
         logger.info(f"This layer gets {len(full)} linears.")
-        layer_groups = get_layer_sensitivity_group_mapping(experts_num).values()
-        subset = {n: full[n] for n in chain.from_iterable(layer_groups) if n in full}
+        layer_groups = get_layer_sensitivity_group_mapping(num_experts)
+        subset = {}
+        for group_name, sub_names in layer_groups.items():
+            matched_subs = {n: full[n] for n in sub_names if n in full}
+            if matched_subs:
+                subset[group_name] = matched_subs
+        for key, value in subset.items():
+            logger.info(f"{key}: {len(value)}")
 
         if not subset:
             layer.cpu()
@@ -80,106 +75,125 @@ def _compute_sensitivity_scores(
             cleanup_memory()
             continue
 
-        quant_bits_list = [4, 8]
-        ptq: Dict[str, PostTrainingQuantization] = {}
-        for quant_bits in quant_bits_list:
-            logger.info(f"Quantizing to {quant_bits} bits...")
-            for name, linear_layer in subset.items():
-                layer_name = f"model.layers.{layer_idx_str}.{name}"
-                ptq[name] = PostTrainingQuantization(
-                    layer=linear_layer,
+        # r1: List[Tensor] = [None]
+
+        # def _make_hook():
+        #     def hook(module, input):
+        #         t = input[0] if isinstance(input, tuple) else input
+        #         r1[0] = t.detach().cpu()
+
+        #     return hook
+
+        # handles = [
+        #     layer.post_attention_layernorm.register_forward_pre_hook(_make_hook())
+        # ]
+
+        inps_npu = (inps[0].npu(),)
+        with torch.no_grad():
+            outs = layer(*inps_npu, **model_cache)
+        outs = outs[0] if isinstance(outs, tuple) else outs
+        outs = outs.detach().cpu()
+
+        # r1 = r1[0]
+
+        # for h in handles:
+        #     h.remove()
+
+        for name, linears in subset.items():
+
+            layer_name = f"{prefix}.{layer_idx_str}.{name}"
+            logger.info(f"Processing {layer_name}")
+            size = _calculate_weight_size(linears)
+            results = {"size": size * 2}
+            quant_bits = [4, 8] if "mlp.experts" in name else [8]
+            for quant_bit in quant_bits:
+                logger.info(f"quantizing to {quant_bit}-bit...")
+                ptq = PostTrainingQuantization(
+                    layers=linears,
                     quant_type=args.quant_type,
-                    quant_bits=quant_bits,
+                    quant_bit=quant_bit,
                     quant_sym=True,
-                    context_length=args.quant_context_length,
                     group_size=0,
-                    sensitivity_metric=args.sensitivity_metric,
                 )
-
-            def add_batch(name_: str):
-                def tmp(_, inp, out):
-                    ptq[name_].add_batch(inp, out)
-
-                return tmp
-
-            handles = [m.register_forward_hook(add_batch(n)) for n, m in subset.items()]
-
-            for j in range(samples_num):
-                res = layer(
-                    *inps[j],
-                    **{
-                        k: v[j] if isinstance(v, list) else v
-                        for k, v in model_cache.items()
-                    },
+                # 浮点权重下 cpu，linears权重变为伪量化权重，上 npu
+                ptq.run()
+                logger.info("computing losses...")
+                part_results = {"size": size * quant_bit / 8}
+                # if "mlp" in name:
+                #     with torch.no_grad():
+                #         r2_fake = layer.mlp(layer.post_attention_layernorm(r1.npu()))
+                #     r2_fake = r2_fake[0] if isinstance(r2_fake, tuple) else r2_fake
+                #     r2_fake = r2_fake.detach().cpu() + r1
+                #     part_results["metrics"] = calculate_losses(
+                #         y_true=outs,
+                #         y_fake=r2_fake,
+                #         metrics=sensitivity_metrics,
+                #     )
+                # else:
+                    # with torch.no_grad():
+                    #     r1_fake = layer.self_attn(
+                    #         layer.input_layernorm(inps_npu[0]), **model_cache
+                    #     )
+                    # r1_fake = r1_fake[0] if isinstance(r1_fake, tuple) else r1_fake
+                    # r1_fake = r1_fake.detach().cpu() + inps[0]
+                    # part_results["metrics"] = calculate_losses(
+                    #     y_true=r1,
+                    #     y_fake=r1_fake,
+                    #     metrics=sensitivity_metrics,
+                    # )
+                with torch.no_grad():
+                    fake = layer(*inps_npu, **model_cache)
+                fake = fake[0] if isinstance(fake, tuple) else fake
+                fake = fake.detach().cpu()
+                part_results["metrics"] = calculate_losses(
+                    y_true=outs,
+                    y_fake=fake,
+                    metrics=sensitivity_metrics,
                 )
-                outs[j] = res if isinstance(res, tuple) else (res,)
-            for h in handles:
-                h.remove()
-            for name in subset:
-                ptq[name].post_batch()
+                results[f"{quant_bit}-bit"] = part_results
 
-            for name, module in subset.items():
-                layer_name = f"model.layers.{layer_idx_str}.{name}"
-                losses = ptq[name].run(transform_weights=False)
-                sensitivity_scores[layer_name][quant_bits] = {
-                    args.sensitivity_metric: losses[0]
-                }
-                ptq[name].free()
+                # 删除量化权重，linears权重恢复为浮点权重
+                ptq.free()
+                del ptq
 
-        del ptq
-        cleanup_memory()
-
-        for layer_group in layer_groups:
-            subset = {n: full[n] for n in layer_group if n in full}
-            if not subset:
-                continue
-            subset_scores = [-torch.inf]
-            for name in subset:
-                layer_name = f"model.layers.{layer_idx_str}.{name}"
-                ratio_scores = [
-                    sensitivity_scores[layer_name][4][args.sensitivity_metric]
-                    / (
-                        sensitivity_scores[layer_name][8][args.sensitivity_metric]
-                        + 1e-9
+            if "mlp.experts" in name:
+                results["gold"] = (
+                    (
+                        results["4-bit"]["metrics"]["mse"]
+                        - results["8-bit"]["metrics"]["mse"]
                     )
-                ]
-                subset_scores = [max(subset_scores[0], ratio_scores[0])]
+                    * 1e8
+                    / (results["8-bit"]["size"] - results["4-bit"]["size"])
+                )
+            else:
+                results["gold"] = (
+                    results["8-bit"]["metrics"]["mse"]
+                    * 1e8
+                    / (results["size"] - results["8-bit"]["size"])
+                )
 
-            for name, module in subset.items():
-                layer_name = f"model.layers.{layer_idx_str}.{name}"
-                sensitivity_scores[layer_name]["ratio"] = {
-                    args.sensitivity_metric: subset_scores[0]
-                }
-                sensitivity_scores[layer_name]["size"] = module.weight.numel()
+            logger.info(f"{layer_name} = {results}")
 
-        inps, outs = outs, inps
+            sensitivity_scores[layer_name] = results
+
+        inps = (outs,)
         layer.cpu()
-        del layer
+        # del r1, handles
+        del outs, inps_npu
         cleanup_memory()
 
-    del inps, outs, model_cache
+    if adapter is None:
+        model.config.use_cache = use_cache
+    del inps, model_cache
     cleanup_memory()
-    model.config.use_cache = use_cache
     # ========================================================================
-
     logger.info("Sensitivity scores have been computed.")
-
-    # sensitivity scores analysis
-    analyze_sensitivity_scores(
-        sensitivity_scores=sensitivity_scores,
-        score_name=args.sensitivity_metric,
-        save_dir=args.save_dir,
-        experts_num=experts_num,
-    )
-    show_diff_between_bits(
-        sensitivity_scores=sensitivity_scores,
-        score_name=args.sensitivity_metric,
-        save_dir=args.save_dir,
-        experts_num=experts_num,
-    )
 
     with open(args.sensitivity_scores_save_path, "w") as f:
         json.dump(sensitivity_scores, f, indent=4)
+    
+    logger.info("plotting all visuals...")
+    plot_all_visuals(args.sensitivity_scores_save_path, num_layers)
 
 
 def main() -> None:
@@ -191,29 +205,53 @@ def main() -> None:
     parser.add_argument("--quant-samples-num", required=True, type=int)
     parser.add_argument("--quant-context-length", required=True, type=int)
     parser.add_argument("--quant-type", required=True, type=str)
-    parser.add_argument("--sensitivity-metric", required=True, type=str)
+    parser.add_argument("--sensitivity-metrics", required=True, type=str)
     parser.add_argument("--save-dir", required=True, type=str)
     parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
+    parser.add_argument("--is-mm", required=True, type=bool)
+    parser.add_argument("--is-deepseek-v32", required=True, type=bool)
+
     args = parser.parse_args()
 
-    model = AutoModelForCausalLM.from_pretrained(
-        args.model_name_or_path,
-        trust_remote_code=True,
-        torch_dtype="auto",
-        device_map="cpu",
-        local_files_only=True,
-    )
+    if args.is_deepseek_v32:
+        from msmodelslim.model.deepseek_v3_2.model_adapter import DeepSeekV32ModelAdapter
+
+        model_type = "deepseek_v32"
+        adapter = DeepSeekV32ModelAdapter(
+            model_path=args.model_name_or_path,
+            model_type="DeepSeek-V3.2",
+        )
+        model = adapter.init_model(device="cpu")
+        model.config = adapter._load_config()
+        model.dtype = torch.bfloat16
+        model.device = torch.device("cpu")
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            args.model_name_or_path,
+            trust_remote_code=True,
+            torch_dtype="auto",
+            device_map="cpu",
+            local_files_only=True,
+        )
+        model_type = model.config.model_type
+        adapter = None
+
+    logger.info(f"model_type = {model_type}")
+    if NEED_CONVERT_MOE[model_type]:
+        CONVERT_MOE_FUNC[model_type](model.model)
+    
+    model.eval()
 
     seed_everything(args.seed)
-    calibration_samples = prepare_calibration_samples(args=args)
+    input_ids = prepare_calibration_samples(args=args)
     logger.info("prepare calibration samples successfully!")
 
-    with torch.no_grad():
-        _compute_sensitivity_scores(
-            model=model,
-            args=args,
-            calibration_samples=calibration_samples,
-        )
+    _compute_sensitivity_scores(
+        model=model,
+        args=args,
+        input_ids=input_ids,
+        adapter=adapter,
+    )
 
 
 if __name__ == "__main__":

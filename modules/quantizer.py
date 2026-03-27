@@ -1,13 +1,9 @@
 import os
 import abc
-import copy
 import json
 import yaml
 from utils.shell import ShellRunner
-from utils.file_io import write_yaml
 from utils.logger import logger
-from collections import defaultdict
-from aqt.utils.quant_config_manager import TRANSFORMER_LAYER_PATTERNS
 
 try:
     from ruamel.yaml import YAML
@@ -135,8 +131,9 @@ class ModelslimQuantizer(BaseQuantizer):
             yaml.representer.ignore_aliases = _should_ignore_aliases
 
             # 构建根配置
+            is_mm = self.config.get("is_mm", False)
             root = CommentedMap()
-            root["apiversion"] = "modelslim_v1"
+            root["apiversion"] = "multimodal_vlm_modelslim_v1" if is_mm else "modelslim_v1"
 
             # metadata部分
             metadata = CommentedMap()
@@ -328,6 +325,10 @@ class ModelslimQuantizer(BaseQuantizer):
             else:
                 spec["save"] = [CommentedMap(item) for item in v1_save]
 
+            if is_mm:
+                spec["dataset"] = "calibImages"
+                spec["default_text"] = "Describe the image in detail."
+
             root["spec"] = spec
 
             with open(self.output_config_path, "w", encoding="utf-8") as f:
@@ -350,7 +351,18 @@ class ModelslimQuantizer(BaseQuantizer):
         with open(self.output_config_path) as f:
             base = yaml.safe_load(f)
 
-        w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg = self._get_quant_config()
+        if not os.path.exists(self.hybrid_quant_schema_path):
+            raise FileNotFoundError(
+                f"Hybrid quant schema file not found: {self.hybrid_quant_schema_path}"
+            )
+
+        with open(self.hybrid_quant_schema_path) as f:
+            hybrid_quant_schema = json.load(f)
+
+        w4a8_perchannel_cfg = hybrid_quant_schema.get("w4a8_dynamic_perchannel", {"include": [], "exclude": []})
+        w4a8_pergroup_cfg = hybrid_quant_schema.get("w4a8_dynamic_pergroup", {"include": [], "exclude": []})
+        w8a8_cfg = hybrid_quant_schema.get("w8a8_dynamic", {"include": [], "exclude": []})
+
         anchor_mapping = {}
         for process in base["spec"]["process"]:
             if process["type"] == "group":
@@ -391,55 +403,6 @@ class ModelslimQuantizer(BaseQuantizer):
             logger.error(f"Failed to generate quant config: {e}")
             raise
 
-    def _get_quant_config(self):
-        if not os.path.exists(self.hybrid_quant_schema_path):
-            raise FileNotFoundError(
-                f"Hybrid quant schema file not found: {self.hybrid_quant_schema_path}"
-            )
-
-        with open(self.hybrid_quant_schema_path) as f:
-            hybrid_quant_schema = json.load(f)
-
-        w4a8_perchannel_cfg = defaultdict(FlowStyleList)
-        w4a8_pergroup_cfg = defaultdict(FlowStyleList)
-        w8a8_cfg = defaultdict(FlowStyleList)
-
-        if hybrid_quant_schema:
-            for pattern, quant_schema in hybrid_quant_schema.items():
-                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
-                    raise ValueError(
-                        f"Unsupported quant schema: {quant_schema} for pattern: {pattern}"
-                    )
-
-                if pattern in TRANSFORMER_LAYER_PATTERNS:
-                    if quant_schema == "w4a8_dynamic_pergroup":
-                        w4a8_pergroup_cfg["include"].append(pattern)
-                    elif quant_schema == "w8a8_dynamic":
-                        w8a8_cfg["include"].append(pattern)
-                    elif quant_schema == "w4a8_dynamic_perchannel":
-                        raise ValueError(
-                            f"pattern {pattern} should not be quantized with w4a8_dynamic_perchannel."
-                        )
-                else:
-                    if ".mlp.experts.*" in pattern:
-                        if quant_schema == "w8a8_dynamic":
-                            if "layers.*.mlp.experts" not in pattern:
-                                w4a8_perchannel_cfg["exclude"].append(pattern)
-                            w8a8_cfg["include"].append(pattern)
-                        elif quant_schema == "w4a8_dynamic_perchannel":
-                            if "layers.*.mlp.experts" not in pattern:
-                                w8a8_cfg["exclude"].append(pattern)
-                            w4a8_perchannel_cfg["include"].append(pattern)
-                    else:
-                        if quant_schema == "w8a8_dynamic":
-                            w8a8_cfg["include"].append(pattern)
-                            w4a8_pergroup_cfg["exclude"].append(pattern)
-                        elif quant_schema == "w4a8_dynamic_pergroup":
-                            w4a8_pergroup_cfg["include"].append(pattern)
-                            w8a8_cfg["exclude"].append(pattern)
-
-        return w4a8_perchannel_cfg, w4a8_pergroup_cfg, w8a8_cfg
-
     def run(self):
         """
         执行完整的量化流程。
@@ -449,6 +412,12 @@ class ModelslimQuantizer(BaseQuantizer):
         )
         try:
             env_prefix = (
+                # TODO: transformers 版本切换
+                # modelslim 对不同模型量化需要不同的 transformers 版本
+                # deepseek v32 需要 transformers==4.48.2
+                # qwen3.5 需要 transformers>=5.2.0
+                # 添加代理参数
+                # pip install transformers==4.57.6 (替换为实际版本)
                 f"export ASCEND_RT_VISIBLE_DEVICES={self.config['visible_devices']}; "
             )
             cmd = (
@@ -461,7 +430,7 @@ class ModelslimQuantizer(BaseQuantizer):
                 f"--trust_remote_code {self.config['trust_remote_code']}"
             )
             full_cmd = env_prefix + cmd
-            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=10800)
+            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=36000)
             if not success:
                 logger.error(f"Modelslim quantization failed. Stderr: {stderr}")
                 raise Exception("Modelslim failed.")
@@ -478,11 +447,17 @@ class LLMCompressorQuantizer(BaseQuantizer):
     """
 
     def _generate_llmcompressor_config(self) -> None:
-        targets = self._get_quant_config()
+        if not os.path.exists(self.hybrid_quant_schema_re_path):
+            raise FileNotFoundError(
+                f"Hybrid quant schema re file not found: {self.hybrid_quant_schema_re_path}"
+            )
 
-        w8a8_targets = targets.get("w8a8_dynamic", [])
-        w4a8_perchannel_targets = targets.get("w4a8_dynamic_perchannel", [])
-        w4a8_pergroup_targets = targets.get("w4a8_dynamic_pergroup", [])
+        with open(self.hybrid_quant_schema_re_path) as f:
+            hybrid_quant_schema_re = json.load(f)
+
+        w8a8_targets = hybrid_quant_schema_re.get("w8a8_dynamic", [])
+        w4a8_perchannel_targets = hybrid_quant_schema_re.get("w4a8_dynamic_perchannel", [])
+        w4a8_pergroup_targets = hybrid_quant_schema_re.get("w4a8_dynamic_pergroup", [])
 
         ignores = [
             "lm_head",
@@ -702,33 +677,6 @@ class LLMCompressorQuantizer(BaseQuantizer):
         except Exception as e:
             logger.error(f"Failed to generate llmcompressor quantization script: {e}")
             raise
-
-    def _get_quant_config(self):
-        if not os.path.exists(self.hybrid_quant_schema_re_path):
-            raise FileNotFoundError(
-                f"Hybrid quant schema re file not found: {self.hybrid_quant_schema_re_path}"
-            )
-
-        with open(self.hybrid_quant_schema_re_path) as f:
-            hybrid_quant_schema_re = json.load(f)
-
-        targets = defaultdict(FlowStyleList)
-
-        if hybrid_quant_schema_re:
-            for pattern, quant_schema in hybrid_quant_schema_re.items():
-                if quant_schema not in SUPPORTED_QUANTIZATION_SCHEMAS:
-                    raise ValueError(
-                        f"Unsupported quant schema: {quant_schema} for pattern: {pattern}"
-                    )
-
-                if quant_schema == "w4a8_dynamic_pergroup":
-                    targets["w4a8_dynamic_pergroup"].append(pattern)
-                elif quant_schema == "w8a8_dynamic":
-                    targets["w8a8_dynamic"].append(pattern)
-                elif quant_schema == "w4a8_dynamic_perchannel":
-                    targets["w4a8_dynamic_perchannel"].append(pattern)
-
-        return targets
 
     def run(self):
         """

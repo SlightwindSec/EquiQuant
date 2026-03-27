@@ -69,8 +69,8 @@ class GlobalConfig:
         visible_devices = cfg.get("quantization_visible_devices", "0")
         if quantization_tool == "llmcompressor" and "," in str(visible_devices).strip():
             raise ValueError(
-                f"llmcompressor currently does NOT support multi-card! "
-                f"Please set `quantization_visible_devices` to a single NPU id in config/config.yaml"
+                "llmcompressor currently does NOT support multi-card! "
+                "Please set `quantization_visible_devices` to a single NPU id in config/config.yaml"
             )
 
         calib_data_path = cfg.get("quantization_calib_data_path", "")
@@ -86,6 +86,8 @@ class GlobalConfig:
             a_bit = quant_template.get("a_bit") or cfg.get("quantization_a_bit", 8)
 
             normalized["quantization"] = {
+                "is_mm": cfg.get("is_mm", False),
+                "is_deepseek_v32": cfg.get("is_deepseek_v32", False),
                 "visible_devices": visible_devices,
                 "model_type": cfg.get("quantization_model_type", "Qwen3-32B"),
                 "device": cfg.get("quantization_device", "npu"),
@@ -175,7 +177,7 @@ class GlobalConfig:
         if quantization_tool == "msmodelslim":
             vllm_args["quantization"] = "ascend"
         if "served-model-name" not in vllm_args:
-            served_model_name = cfg.get("vllm_served_model_name", "qwen3")
+            served_model_name = cfg.get("vllm_served_model_name", "model")
             vllm_args["served-model-name"] = served_model_name
 
         normalized["vllm_server"] = {
@@ -184,7 +186,7 @@ class GlobalConfig:
             "host": "localhost",
             "port": cfg.get("vllm_port", 1234),
             "health_check_endpoint": "/v1/models",
-            "startup_timeout": 600,
+            "startup_timeout": 1800,
             "args": vllm_args,
         }
 
@@ -199,13 +201,14 @@ class GlobalConfig:
             normalized["workspace"]["base_dir"], "aqt_results"
         )
         normalized["aqt"] = {
+            "is_mm": cfg.get("is_mm", False),
             "results_dir": cfg.get("aqt_results_dir", default_aqt_results),
             "omp_num_threads": cfg.get("aqt_omp_num_threads", 32),
             "ascend_visible_devices": cfg.get("aqt_ascend_visible_devices", "0"),
             "quant_data_path": cfg.get("aqt_quant_data_path"),
             "quant_samples_num": cfg.get("aqt_quant_samples_num", 128),
             "quant_context_length": cfg.get("aqt_quant_context_length", 4096),
-            "sensitivity_metric": cfg.get("aqt_sensitivity_metric", "mse"),
+            "sensitivity_metrics": cfg.get("aqt_sensitivity_metrics", ["mse"]),
             "initial_budget_mb": cfg.get("aqt_initial_budget_mb", 2500),
             "budget_step_mb": cfg.get("aqt_budget_step_mb", 500),
             "budget_step_down_mb": cfg.get("aqt_budget_step_down_mb", 250),

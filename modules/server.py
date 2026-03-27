@@ -87,6 +87,10 @@ class VllmServer:
                 cmd_parts.append(f"--{key} {shlex.quote(str(value))}")
 
         full_command_str = " ".join(cmd_parts)
+        # TODO: transformers 版本切换
+        # 较新的 vllm vllm-ascend 一般使用 transformers==4.57.6
+        # 添加代理参数
+        # pip install transformers==4.57.6
         return env_prefix + full_command_str
 
     def start(self):

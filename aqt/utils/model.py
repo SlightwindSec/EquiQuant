@@ -25,32 +25,27 @@ def find_layers(
 
 def catch_model_cache(
     model: nn.Module,
-    layers: List[nn.Module],
-    calibration_samples: Tensor,
+    input_ids: Tensor,
 ) -> tuple[List[Tensor], ModelCacheT]:
-    layers[0] = layers[0].npu()
     inps: List[Tensor] = []
     attention_mask: List[Tensor] = []
     position_ids: List[Tensor] = []
     cache_position: List[Tensor] = []
     position_embeddings: List[Tensor] = []
-    mask: List[Tensor] = []
-    start_pos: List[int] = []
     freqs_cis: List[Tensor] = []
 
     class Catcher(nn.Module):
         def __init__(self, module: nn.Module) -> None:
             super().__init__()
             self.module = module
-            # the attr below appeared in transformers >= 4.53 for qwen DecoderLayer
-            # and is accessed directly, so we need to make a link to it
             self.attention_type = getattr(self.module, "attention_type", None)
+            self.layer_type = getattr(self.module, "layer_type", None)
 
         def forward(self, *args, **kwargs):  # noqa
             # kwargs: ['attention_mask', 'position_ids', 'past_key_value',
             # 'output_attentions', 'use_cache', 'cache_position',
             # 'position_embeddings']
-            inps.append(args)
+            inps.append((args[0].detach().cpu(),))
             if "attention_mask" in kwargs:
                 attention_mask.append(kwargs["attention_mask"])
             if "position_ids" in kwargs:
@@ -62,26 +57,23 @@ def catch_model_cache(
             if "position_embeddings" in kwargs:
                 if not position_embeddings:
                     position_embeddings.append(kwargs["position_embeddings"])
-            if "mask" in kwargs:
-                if not mask:
-                    mask.append(kwargs["mask"])
-            if "start_pos" in kwargs:
-                if not start_pos:
-                    start_pos.append(kwargs["start_pos"])
             if "freqs_cis" in kwargs:
                 if not freqs_cis:
-                    freqs_cis.append(kwargs["freqs_cis"].npu())
+                    freqs_cis.append(kwargs["freqs_cis"])
             raise ValueError
 
-    layers[0] = Catcher(layers[0])
-    for tokens in calibration_samples:
-        try:
-            model.model(tokens.npu())
-        except ValueError:
-            pass
+    model.model.embed_tokens.npu()
+    model.model.layers[0].npu()
+    model.model.layers[0] = Catcher(model.model.layers[0])
 
-    layers[0] = layers[0].module
-    layers[0] = layers[0].cpu()
+    try:
+        model(input_ids.npu())
+    except ValueError:
+        pass
+
+    model.model.layers[0] = model.model.layers[0].module
+    model.model.layers[0].cpu()
+    model.model.embed_tokens.cpu()
 
     model_cache = {}
     if attention_mask:
@@ -92,11 +84,7 @@ def catch_model_cache(
         model_cache["cache_position"] = cache_position[0]
     if position_embeddings:
         model_cache["position_embeddings"] = position_embeddings[0]
-    if mask:
-        model_cache["mask"] = mask[0]
-    if start_pos:
-        model_cache["start_pos"] = start_pos[0]
     if freqs_cis:
         model_cache["freqs_cis"] = freqs_cis[0]
 
-    return inps, model_cache
+    return inps[0], model_cache

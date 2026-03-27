@@ -39,8 +39,8 @@ class EquiQuantEngine:
                 "tolerance_ratio": tolerance,
             }
         self.last_results = None
-        self.last_hybrid_quant_schema_path = ""
         self.run_id = 0
+        self.quantized_model_path = ""
 
         self.quantization_tool = config.get("quantization_tool", "msmodelslim")
 
@@ -191,37 +191,43 @@ class EquiQuantEngine:
             )
 
             try:
-                # Step 1: 调用 AQT 获取量化配置路径
-                hybrid_quant_schema_path, hybrid_quant_schema_re_path = (
-                    self.aqt_tool.run(
-                        run_id=self.run_id,
-                        budget_mb=self.current_budget,
-                        last_hybrid_quant_schema_path=self.last_hybrid_quant_schema_path,
+                if not self.quantized_model_path:
+                    # Step 1: 调用 AQT 获取量化配置路径
+                    hybrid_quant_schema_path, hybrid_quant_schema_re_path = (
+                        self.aqt_tool.run(
+                            run_id=self.run_id,
+                            budget_mb=self.current_budget,
+                        )
                     )
-                )
-                if not os.path.exists(hybrid_quant_schema_path) or not os.path.exists(
-                    hybrid_quant_schema_re_path
-                ):
-                    logger.error("AQT failed. Skipping this trial.")
-                    break
-                self.last_hybrid_quant_schema_path = hybrid_quant_schema_path
+                    if not os.path.exists(hybrid_quant_schema_path) or not os.path.exists(
+                        hybrid_quant_schema_re_path
+                    ):
+                        logger.error("AQT failed. Skipping this trial.")
+                        break
 
-                # Step 2: 量化器获取量化配置生成量化所需yaml/py
-                quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]
-                quantizer = quantizer_cls(
-                    quant_config=self.config["quantization"],
-                    base_model_path=self.config["base_model_path"],
-                    fallback_layers=base_disable_names,
-                    output_config_path=quant_config_path,
-                    output_weights_path=quant_weights_path,
-                    hybrid_quant_schema_path=hybrid_quant_schema_path,
-                    hybrid_quant_schema_re_path=hybrid_quant_schema_re_path,
-                )
+                    # Step 2: 量化器获取量化配置生成量化所需yaml/py
+                    quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]
+                    quantizer = quantizer_cls(
+                        quant_config=self.config["quantization"],
+                        base_model_path=self.config["base_model_path"],
+                        fallback_layers=base_disable_names,
+                        output_config_path=quant_config_path,
+                        output_weights_path=quant_weights_path,
+                        hybrid_quant_schema_path=hybrid_quant_schema_path,
+                        hybrid_quant_schema_re_path=hybrid_quant_schema_re_path,
+                    )
 
-                # Step 3: 量化器量化模型
-                quantized_model_path = quantizer.run()
-                if not quantized_model_path:
-                    logger.error("Quantization failed. Skipping this trial.")
+                    # Step 3: 量化器量化模型
+                    quantized_model_path = quantizer.run()
+                    if not quantized_model_path:
+                        logger.error("Quantization failed. Skipping this trial.")
+                        break
+                else:
+                    quantized_model_path = self.quantized_model_path
+                    self.quantized_model_path = ""
+
+                if not os.path.exists(quantized_model_path):
+                    logger.error("Quantized model path does not exist. Skipping this trial.")
                     break
 
                 # Step 4: 拉取vllm服务

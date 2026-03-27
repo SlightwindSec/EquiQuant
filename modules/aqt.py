@@ -24,7 +24,7 @@ class AutomaticQuantizationTool:
         self.workspace = workspace or {}
         self.quant_type = quant_type
 
-        self.metric = self.config.get("sensitivity_metric", "mse")
+        self.metrics = self.config.get("sensitivity_metrics", ["mse"])
         self.results_root = os.path.abspath(
             self.config.get("results_dir")
             or os.path.join(self.workspace.get("base_dir", "workspace"), "aqt_results")
@@ -63,14 +63,16 @@ class AutomaticQuantizationTool:
             f"--quant-samples-num {self.config.get('quant_samples_num', 128)} "
             f"--quant-context-length {self.config.get('quant_context_length', 4096)} "
             f"--quant-type {self.quant_type} "
-            f"--sensitivity-metric {shlex.quote(self.metric)} "
+            f"--sensitivity-metrics {shlex.quote(','.join(self.metrics))} "
             f"--save-dir {shlex.quote(save_dir)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
+            f"--is-mm {self.config.get('is_mm', False)} "
+            f"--is-deepseek-v32 {self.config.get('is_deepseek_v32', False)} "
         )
         return cmd
 
     def compute_sensitivity_scores_only(self, flag: bool = True):
-        save_dir = os.path.join(self.results_root, self.quant_type, self.metric)
+        save_dir = os.path.join(self.results_root, self.quant_type)
         os.makedirs(save_dir, exist_ok=True)
         self.sensitivity_scores_save_path = os.path.join(
             save_dir, "sensitivity_scores.json"
@@ -101,31 +103,25 @@ class AutomaticQuantizationTool:
         budget_mb: int,
         hybrid_quant_schema_path: str,
         hybrid_quant_schema_re_path: str,
-        last_hybrid_quant_schema_path: str,
     ) -> str:
         cmd = (
             f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
             f"export OMP_NUM_THREADS={self.omp_num_threads}; "
             f"python aqt/launch.py "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
-            f"--sensitivity-metric {shlex.quote(self.metric)} "
             f"--ckpt-size-budget-mb {budget_mb} "
             f"--hybrid_quant_schema_path {shlex.quote(hybrid_quant_schema_path)} "
             f"--hybrid_quant_schema_re_path {shlex.quote(hybrid_quant_schema_re_path)} "
-            f"--last_hybrid_quant_schema_path {shlex.quote(last_hybrid_quant_schema_path)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
         )
         return cmd
 
     def run(
-        self, run_id: int, budget_mb: int, last_hybrid_quant_schema_path: str = ""
-    ) -> str:
+        self, run_id: int, budget_mb: int) -> str:
         """
         运行 AQT 获取敏感度分析得到的量化配置。
         """
-        save_dir = os.path.join(
-            self.results_root, f"run{run_id:03d}", f"budget_{budget_mb}mb"
-        )
+        save_dir = os.path.join(self.results_root, f"run{run_id:03d}")
         os.makedirs(save_dir, exist_ok=True)
         hybrid_quant_schema_path = os.path.join(save_dir, "hybrid_quant_schema.json")
         hybrid_quant_schema_re_path = os.path.join(
@@ -136,11 +132,10 @@ class AutomaticQuantizationTool:
             budget_mb,
             hybrid_quant_schema_path,
             hybrid_quant_schema_re_path,
-            last_hybrid_quant_schema_path,
         )
         success, stdout, stderr = ShellRunner.run_cmd(run_cmd, timeout=10800)
 
         if not success:
-            logger.error(f"AQT failed to get hybrid quant schema.")
+            logger.error("AQT failed to get hybrid quant schema.")
 
         return hybrid_quant_schema_path, hybrid_quant_schema_re_path
