@@ -202,6 +202,7 @@ class GlobalConfig:
         )
         normalized["aqt"] = {
             "is_mm": cfg.get("is_mm", False),
+            "is_deepseek_v32": cfg.get("is_deepseek_v32", False),
             "results_dir": cfg.get("aqt_results_dir", default_aqt_results),
             "omp_num_threads": cfg.get("aqt_omp_num_threads", 32),
             "ascend_visible_devices": cfg.get("aqt_ascend_visible_devices", "0"),

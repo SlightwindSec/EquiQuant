@@ -3,7 +3,6 @@ import os
 import random
 from pathlib import Path
 from packaging import version
-import importlib.util
 
 import numpy as np
 import torch
@@ -51,7 +50,10 @@ def print_memory_usage():
     logger.info(f"Allocated: {allocated:.2f} GB, Cached: {cache:.2f} GB")
 
 
-def is_transformers_ge(version: str = "5.0.0") -> bool:
-    if not importlib.util.find_spec("transformers"):
+def is_transformers_ge(ve: str = "5.0.0") -> bool:
+    try:
+        import transformers
+        return version.parse(transformers.__version__) >= version.parse(ve)
+    except ImportError:
+        logger.error("transformers not installed")
         return False
-    return version.parse(importlib.util.get_package_version("transformers")) >= version.parse(version)

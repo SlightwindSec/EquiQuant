@@ -55,7 +55,7 @@ class AutomaticQuantizationTool:
         cmd = (
             f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
             f"export OMP_NUM_THREADS={self.omp_num_threads}; "
-            f"python aqt/compute_sensitivity_scores.py "
+            f"python -m src.aqt.compute_sensitivity_scores "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
             f"--seed 42 "
             f"--quant-data-path {shlex.quote(quant_data_path)} "
@@ -66,9 +66,11 @@ class AutomaticQuantizationTool:
             f"--sensitivity-metrics {shlex.quote(','.join(self.metrics))} "
             f"--save-dir {shlex.quote(save_dir)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
-            f"--is-mm {self.config.get('is_mm', False)} "
-            f"--is-deepseek-v32 {self.config.get('is_deepseek_v32', False)} "
         )
+        if self.config.get('is_mm', False):
+            cmd += "--is-mm "
+        if self.config.get('is_deepseek_v32', False):
+            cmd += "--is-deepseek-v32 "
         return cmd
 
     def compute_sensitivity_scores_only(self, flag: bool = True):
@@ -107,7 +109,7 @@ class AutomaticQuantizationTool:
         cmd = (
             f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
             f"export OMP_NUM_THREADS={self.omp_num_threads}; "
-            f"python aqt/launch.py "
+            f"python -m src.aqt.launch "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
             f"--ckpt-size-budget-mb {budget_mb} "
             f"--hybrid_quant_schema_path {shlex.quote(hybrid_quant_schema_path)} "

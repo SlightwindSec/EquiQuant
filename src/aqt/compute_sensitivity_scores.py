@@ -44,8 +44,8 @@ def _compute_sensitivity_scores(
     logger.info(f"inps shape: {inps[0].shape}")
     logger.info("Inputs gathered.")
 
-    num_experts = model.config.get("num_experts", model.config.get("n_routed_experts", 0))
-    num_layers = model.config.get("num_hidden_layers")
+    num_experts = model.config.n_routed_experts if hasattr(model.config, "n_routed_experts") else model.config.num_experts
+    num_layers = model.config.num_hidden_layers
     prefix = "model.language_model.layers" if args.is_mm else "model.layers"
 
     sensitivity_scores = {}
@@ -208,8 +208,8 @@ def main() -> None:
     parser.add_argument("--sensitivity-metrics", required=True, type=str)
     parser.add_argument("--save-dir", required=True, type=str)
     parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
-    parser.add_argument("--is-mm", required=True, type=bool)
-    parser.add_argument("--is-deepseek-v32", required=True, type=bool)
+    parser.add_argument("--is-mm", action="store_true")
+    parser.add_argument("--is-deepseek-v32", action="store_true")
 
     args = parser.parse_args()
 
