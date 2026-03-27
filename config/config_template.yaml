@@ -71,6 +71,7 @@ vllm_port: 1234
 vllm_env_vars:
   HCCL_OP_RETRY_ENABLE: "L0:0, L1:0, L2:0"
   HCCL_BUFFSIZE: 1024
+  # TODO: 根据实际情况修改用的卡号
   ASCEND_RT_VISIBLE_DEVICES: "0,1"
   OMP_PROC_BIND: false
   ATB_LLM_HCCL_ENABLE: 1
@@ -108,6 +109,7 @@ vllm_args:
 aqt_enabled: true
 aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
+# TODO: 根据实际情况修改用的卡号
 aqt_ascend_visible_devices: "0"
 # 校准集
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
@@ -136,6 +138,7 @@ aqt_max_budget_mb: 2000
 # max_sequence_length: 2048
 # quantization_modifier: "PTQ"
 quantization_tool: "msmodelslim"
+# TODO: 根据实际情况修改用的卡号
 quantization_visible_devices: "1"
 quantization_model_type: "Qwen3-30B"
 quantization_device: "npu"
@@ -194,7 +197,8 @@ quantization_template_config:
       #       group_size: 64
 
     process:
-      - type: "quarot"
+      # TODO： 选择性开启 quarot
+      # - type: "quarot"
       - type: "flex_smooth_quant"
         enable_subgraph_type:
           - 'norm-linear'

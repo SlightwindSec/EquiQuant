@@ -9,8 +9,8 @@ import importlib.util
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from utils.shell import ShellRunner
-from utils.logger import logger
+from ..utils.shell import ShellRunner
+from ..utils.logger import logger
 
 
 class AisBencher:

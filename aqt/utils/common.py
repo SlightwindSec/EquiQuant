@@ -7,7 +7,7 @@ import importlib.util
 
 import numpy as np
 import torch
-from utils.logger import logger
+from ...utils.logger import logger
 
 
 def get_project_path() -> Path:

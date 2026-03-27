@@ -1,6 +1,6 @@
-base_model_path: "/home/weight/Qwen3.5-35B-A3B"
-is_mm: true
-is_deepseek_v32: false
+base_model_path: "/home/weight/DeepSeek-V3.2"
+is_mm: false
+is_deepseek_v32: true
 
 # -----------------------------------------------
 # 工作区 (运行时文件)
@@ -26,26 +26,26 @@ evaluation_datasets:
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
-    target_accuracy: 83.33
+    target_accuracy: 90.0
     tolerance_ratio: 6.67
     metric_keys:
       - "aime2024_accuracy"
   aime2025:
     config_name: "aime2025_gen"
     mode: "all"
-    target_accuracy: 80.0
+    target_accuracy: 83.33
     tolerance_ratio: 3.34
     metric_keys:
       - "aime2025_accuracy"
   gpqa:
     config_name: "gpqa_gen_0_shot_cot_chat_prompt"
     mode: "all"
-    target_accuracy: 82.83
+    target_accuracy: 81.0
 
 aisbench_timeout: 7200
 aisbench_request_rate: 0
 aisbench_retry: 2
-aisbench_batch_size: 64
+aisbench_batch_size: 60
 aisbench_max_out_len: 32768
 aisbench_pred_postprocessor: "extract_non_reasoning_content"
 aisbench_generation_kwargs:
@@ -54,6 +54,8 @@ aisbench_generation_kwargs:
   top_p: 0.95
   seed: null
   repetition_penalty: 1.03
+  chat_template_kwargs:
+    thinking: True
 aisbench_log_dir: "workspace/aisbench_logs"
 aisbench_default_metric_keys:
   - "final_accuracy"
@@ -69,40 +71,44 @@ aisbench_extra_args: null
 vllm_port: 1234
 vllm_env_vars:
   HCCL_OP_RETRY_ENABLE: "L0:0, L1:0, L2:0"
+  # TODO: 根据实际情况修改 ip 和 网卡名(ip addr show 查看所有网卡信息)
+  HCCL_IF_IP: 90.90.97.14
+  GLOO_SOCKET_IFNAME: "enp194s0f0"
+  TP_SOCKET_IFNAME: "enp194s0f0"
+  HCCL_SOCKET_IFNAME: "enp194s0f0"
   HCCL_BUFFSIZE: 1024
   # TODO: 根据实际情况修改用的卡号
-  ASCEND_RT_VISIBLE_DEVICES: "0,1"
+  ASCEND_RT_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
+  HCCL_OP_EXPANSION_MODE: "AIV"
+  PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
   OMP_PROC_BIND: false
   ATB_LLM_HCCL_ENABLE: 1
   ATB_LLM_COMM_BACKEND: "lccl"
-  HCCL_OP_EXPANSION_MODE: "AIV"
-  PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
-  TASK_QUEUE_ENABLE: 1
-  CPU_AFFINITY_CONF: 1
   OMP_NUM_THREADS: 10
-  TORCHDYNAMO_ALLOW_INTERNAL_API: 1
-  VLLM_INDUCTOR_NO_FALLBACK: 0
-  MIES_USE_MB_SWAPPER: 1
+  VLLM_RPC_TIMEOUT: 300
+  VLLM_ENGINE_READY_TIMEOUT_S: 1800
 vllm_args:
   trust-remote-code: true
-  tensor-parallel-size: 2
-  data-parallel-size: 1
+  tensor-parallel-size: 8
+  data-parallel-size: 2
   enable-expert-parallel: true
   async-scheduling: true
   enable-prefix-caching: false
-  max-num-seqs: 64
-  allowed-local-media-path: "/"
+  max-num-seqs: 32
   max-model-len: 40960
-  max-num-batched-tokens: 16384
-  gpu-memory-utilization: 0.55
+  max-num-batched-tokens: 8192
+  gpu-memory-utilization: 0.85
   additional-config:
     ascend_scheduler_config:
       enabled: false
     enable_cpu_binding: true
     multistream_overlap_shared_expert: true
+  speculative-config:
+    num_speculative_tokens: 1
+    method: "deepseek_mtp"
   compilation-config:
     cudagraph_mode: "FULL_DECODE_ONLY"
-    cudagraph_capture_sizes: [1,2,4,8,16,32,64]
+    cudagraph_capture_sizes: [1,2,4,8,16,32]
 
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)
@@ -114,16 +120,16 @@ aqt_omp_num_threads: 32
 aqt_ascend_visible_devices: "0"
 # 校准集
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
-aqt_quant_samples_num: 32
+aqt_quant_samples_num: 4
 aqt_quant_context_length: 2048
 # 敏感度指标
-aqt_sensitivity_metric: ["mse", "cosine", "relative_l2", "kl_div"]
+aqt_sensitivity_metric: ["mse", "cosine", "kl_div"]
 # 回退预算
 aqt_initial_budget_mb: 0
-aqt_budget_step_mb: 200
-aqt_budget_step_down_mb: 100
+aqt_budget_step_mb: 2000
+aqt_budget_step_down_mb: 1000
 aqt_min_budget_mb: 0
-aqt_max_budget_mb: 2500
+aqt_max_budget_mb: 25000
 
 # -----------------------------------------------
 # 量化器配置
@@ -138,10 +144,11 @@ aqt_max_budget_mb: 2500
 # num_calibration_samples: 512
 # max_sequence_length: 2048
 # quantization_modifier: "PTQ"
+
 quantization_tool: "msmodelslim"
 # TODO: 根据实际情况修改用的卡号
 quantization_visible_devices: "1"
-quantization_model_type: "Qwen3.5-35B-A3B"
+quantization_model_type: "DeepSeek-V3.2"
 quantization_device: "npu"
 quantization_trust_remote_code: true
 
@@ -152,7 +159,7 @@ quantization_template_config:
 
   v1:
     metadata:
-      config_id: qwen3.5-moe-w4a8-v1
+      config_id: deepseekv32-w4a8-v1
       score: 90
       label:
         is_sparse: false
@@ -184,15 +191,45 @@ quantization_template_config:
           method: "ssz"
 
     process:
-      # TODO： 选择性开启 quarot
+      # TODO: 开启后量化耗时过久，选择性开启
       # - type: "quarot"
-      - type: "flex_smooth_quant"
-        enable_subgraph_type:
-          - 'norm-linear'
-          - 'ov'
-          - 'up-down'
-        include:
-          - "*"
+      # - type: "flex_awq_ssz"
+      #   qconfig:
+      #     act:
+      #       scope: "per_token"
+      #       dtype: "int8"
+      #       symmetric: True
+      #       method: "minmax"
+      #     weight:
+      #       scope: "per_channel"
+      #       dtype: "int4"
+      #       symmetric: True
+      #       method: "ssz"
+      #       ext:
+      #         step: 10
+      #   enable_subgraph_type:
+      #     - 'up-down'
+      #   include:
+      #     - "*"
+      #   exclude:
+      #     - "model.layers.0.*"
+      #     - "model.layers.1.*"
+      #     - "model.layers.2.*"
+      #     - "*mlp.shared_experts.*"
+      # - type: "flex_smooth_quant"
+      #   enable_subgraph_type:
+      #     - 'norm-linear'
+      #     - 'ov'
+      #     - 'up-down'
+      #   include:
+      #     - "*self_attn*"
+      #     - "model.layers.0.mlp.*"
+      #     - "model.layers.1.mlp.*"
+      #     - "model.layers.2.mlp.*"
+      #     - "*mlp.shared_experts.*"
+      #     - "*input_layernorm*"
+      #   exclude:
+      #     - "*post_attention_layernorm*"
       - type: "group"
         configs:
           - type: "linear_quant"

@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from typing import Tuple, Optional, Literal
-from aqt.utils.common import cleanup_memory
 
 
 class Quantizer:

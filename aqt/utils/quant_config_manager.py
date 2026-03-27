@@ -2,7 +2,7 @@ import fnmatch
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
-from utils.logger import logger
+from ...utils.logger import logger
 
 from ..sensitivity import (
     get_layer_sensitivity_group_mapping,

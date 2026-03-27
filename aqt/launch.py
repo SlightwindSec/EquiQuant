@@ -1,9 +1,9 @@
 import json
 import argparse
-from utils.logger import logger
+from ..utils.logger import logger
 import os
 
-from aqt.utils.quant_config_manager import (
+from .utils.quant_config_manager import (
     QuantLayerConfigManager,
     compress_hybrid_quant_schema,
 )

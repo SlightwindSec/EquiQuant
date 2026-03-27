@@ -71,11 +71,13 @@ aisbench_extra_args: null
 vllm_port: 1234
 vllm_env_vars:
   HCCL_OP_RETRY_ENABLE: "L0:0, L1:0, L2:0"
+  # TODO: 根据实际情况修改 ip 和 网卡名(ip addr show 查看所有网卡信息)
   HCCL_IF_IP: 90.90.97.14
   GLOO_SOCKET_IFNAME: "enp194s0f0"
   TP_SOCKET_IFNAME: "enp194s0f0"
   HCCL_SOCKET_IFNAME: "enp194s0f0"
   HCCL_BUFFSIZE: 1024
+  # TODO: 根据实际情况修改用的卡号
   ASCEND_RT_VISIBLE_DEVICES: "0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15"
   HCCL_OP_EXPANSION_MODE: "AIV"
   PYTORCH_NPU_ALLOC_CONF: "expandable_segments:True"
@@ -114,6 +116,7 @@ vllm_args:
 aqt_enabled: true
 aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
+# TODO: 根据实际情况修改用的卡号
 aqt_ascend_visible_devices: "0"
 # 校准集
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
@@ -143,6 +146,7 @@ aqt_max_budget_mb: 25000
 # quantization_modifier: "PTQ"
 
 quantization_tool: "msmodelslim"
+# TODO: 根据实际情况修改用的卡号
 quantization_visible_devices: "1"
 quantization_model_type: "DeepSeek-V3.2-Exp"
 quantization_device: "npu"
@@ -187,44 +191,45 @@ quantization_template_config:
           method: "ssz"
 
     process:
-      - type: "quarot"
-      - type: "flex_awq_ssz"
-        qconfig:
-          act:
-            scope: "per_token"
-            dtype: "int8"
-            symmetric: True
-            method: "minmax"
-          weight:
-            scope: "per_channel"
-            dtype: "int4"
-            symmetric: True
-            method: "ssz"
-            ext:
-              step: 10
-        enable_subgraph_type:
-          - 'up-down'
-        include:
-          - "*"
-        exclude:
-          - "model.layers.0.*"
-          - "model.layers.1.*"
-          - "model.layers.2.*"
-          - "*mlp.shared_experts.*"
-      - type: "flex_smooth_quant"
-        enable_subgraph_type:
-          - 'norm-linear'
-          - 'ov'
-          - 'up-down'
-        include:
-          - "*self_attn*"
-          - "model.layers.0.mlp.*"
-          - "model.layers.1.mlp.*"
-          - "model.layers.2.mlp.*"
-          - "*mlp.shared_experts.*"
-          - "*input_layernorm*"
-        exclude:
-          - "*post_attention_layernorm*"
+      # TODO: 开启后量化耗时过久，选择性开启
+      # - type: "quarot"
+      # - type: "flex_awq_ssz"
+      #   qconfig:
+      #     act:
+      #       scope: "per_token"
+      #       dtype: "int8"
+      #       symmetric: True
+      #       method: "minmax"
+      #     weight:
+      #       scope: "per_channel"
+      #       dtype: "int4"
+      #       symmetric: True
+      #       method: "ssz"
+      #       ext:
+      #         step: 10
+      #   enable_subgraph_type:
+      #     - 'up-down'
+      #   include:
+      #     - "*"
+      #   exclude:
+      #     - "model.layers.0.*"
+      #     - "model.layers.1.*"
+      #     - "model.layers.2.*"
+      #     - "*mlp.shared_experts.*"
+      # - type: "flex_smooth_quant"
+      #   enable_subgraph_type:
+      #     - 'norm-linear'
+      #     - 'ov'
+      #     - 'up-down'
+      #   include:
+      #     - "*self_attn*"
+      #     - "model.layers.0.mlp.*"
+      #     - "model.layers.1.mlp.*"
+      #     - "model.layers.2.mlp.*"
+      #     - "*mlp.shared_experts.*"
+      #     - "*input_layernorm*"
+      #   exclude:
+      #     - "*post_attention_layernorm*"
       - type: "group"
         configs:
           - type: "linear_quant"

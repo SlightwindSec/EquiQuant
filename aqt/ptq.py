@@ -4,9 +4,9 @@ import torch
 from torch import Tensor, nn
 from typing import Dict
 
-from aqt.quantizer import Quantizer
-from aqt.utils.common import cleanup_memory
-from utils.logger import logger
+from .quantizer import Quantizer
+from .utils.common import cleanup_memory
+from ..utils.logger import logger
 
 
 class PostTrainingQuantization:

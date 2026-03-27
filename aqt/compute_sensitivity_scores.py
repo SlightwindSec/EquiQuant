@@ -2,22 +2,22 @@ import json
 import argparse
 from argparse import Namespace
 from typing import Dict, Any
-from utils.logger import logger
+from ..utils.logger import logger
 
 import torch
 from torch import Tensor, nn
 
 from transformers import AutoModelForCausalLM
 
-from aqt.utils.model import (
+from .utils.model import (
     catch_model_cache,
     find_layers,
 )
-from aqt.ptq import PostTrainingQuantization
-from aqt.utils.data import prepare_calibration_samples
-from aqt.utils.common import seed_everything, cleanup_memory
-from aqt.moe_utils import NEED_CONVERT_MOE, CONVERT_MOE_FUNC
-from aqt.sensitivity import (
+from .ptq import PostTrainingQuantization
+from .utils.data import prepare_calibration_samples
+from .utils.common import seed_everything, cleanup_memory
+from .moe_utils import NEED_CONVERT_MOE, CONVERT_MOE_FUNC
+from .sensitivity import (
     get_layer_sensitivity_group_mapping,
     calculate_losses,
     plot_all_visuals,

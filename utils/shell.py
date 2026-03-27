@@ -1,7 +1,7 @@
 import subprocess
 import os
 import signal
-from utils.logger import logger
+from .logger import logger
 
 
 class ShellRunner:

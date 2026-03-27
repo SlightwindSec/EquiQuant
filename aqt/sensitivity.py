@@ -5,7 +5,7 @@ from typing import Callable, Dict, List, Optional
 import torch
 import torch.nn.functional as F
 from matplotlib import pyplot as plt
-from utils.logger import logger
+from ..utils.logger import logger
 
 import json
 import seaborn as sns

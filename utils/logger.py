@@ -66,5 +66,4 @@ def setup_logger(
 
 
 DEFAULT_LOG_FILE = "workspace/equiquant_run.log"
-# from utils.logger import logger
 logger = setup_logger(log_file=DEFAULT_LOG_FILE)

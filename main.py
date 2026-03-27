@@ -1,6 +1,6 @@
-from modules import check_requirements
-from utils import set_global_args, get_config
-from core.engine import EquiQuantEngine
+from .modules import check_requirements
+from .utils import set_global_args, get_config
+from .core.engine import EquiQuantEngine
 
 
 if __name__ == "__main__":

@@ -1,8 +1,8 @@
 import os
 import shlex
 
-from utils.logger import logger
-from utils.shell import ShellRunner
+from ..utils.logger import logger
+from ..utils.shell import ShellRunner
 
 
 class AutomaticQuantizationTool:

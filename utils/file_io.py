@@ -1,6 +1,6 @@
 import yaml
 import os
-from utils.logger import logger
+from .logger import logger
 
 
 def read_yaml(file_path):

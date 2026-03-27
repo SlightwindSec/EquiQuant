@@ -2,8 +2,8 @@ import time
 import requests
 import json
 import shlex
-from utils.shell import AsyncProcess
-from utils.logger import logger
+from ..utils.shell import AsyncProcess
+from ..utils.logger import logger
 
 
 class VllmServer:

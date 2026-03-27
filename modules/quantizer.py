@@ -2,8 +2,8 @@ import os
 import abc
 import json
 import yaml
-from utils.shell import ShellRunner
-from utils.logger import logger
+from ..utils.shell import ShellRunner
+from ..utils.logger import logger
 
 try:
     from ruamel.yaml import YAML

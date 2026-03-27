@@ -3,12 +3,12 @@ import json
 import shutil
 from datetime import datetime
 
-from core.strategy import TuningStrategy
-from modules.aqt import AutomaticQuantizationTool
-from modules.quantizer import ModelslimQuantizer, LLMCompressorQuantizer
-from modules.server import VllmServer
-from modules.bencher import AisBencher
-from utils.logger import logger
+from .strategy import TuningStrategy
+from ..modules.aqt import AutomaticQuantizationTool
+from ..modules.quantizer import ModelslimQuantizer, LLMCompressorQuantizer
+from ..modules.server import VllmServer
+from ..modules.bencher import AisBencher
+from ..utils.logger import logger
 
 
 QUANTIZER_MAPPING = {
