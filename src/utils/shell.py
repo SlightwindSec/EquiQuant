@@ -6,9 +6,13 @@ from .logger import logger
 
 class ShellRunner:
     @staticmethod
-    def run_cmd(cmd, timeout=None):
-        """执行阻塞命令，等待结果"""
+    def run_cmd(cmd, timeout=None, log_path=None):
         logger.info(f"Executing: {cmd}")
+
+        log_content = f"===== Command executed at: {os.popen('date').read().strip()} =====\n"
+        log_content += f"Command: {cmd}\n"
+        log_content += "=" * 80 + "\n"
+        
         try:
             result = subprocess.run(
                 cmd,
@@ -20,10 +24,34 @@ class ShellRunner:
                 encoding="utf-8",
                 errors="replace",
             )
+
+            log_content += f"Return code: {result.returncode}\n\n"
+            log_content += "----- STDOUT -----\n"
+            log_content += result.stdout + "\n\n"
+            log_content += "----- STDERR -----\n"
+            log_content += result.stderr + "\n"
+
+            if log_path:
+                try:
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write(log_content)
+                    logger.info(f"Command log saved to: {log_path}")
+                except Exception as e:
+                    logger.error(f"Failed to write log to {log_path}: {str(e)}")
+
             if result.returncode != 0:
                 logger.error(f"Command failed: {result.stderr}")
             return result.returncode == 0, result.stdout, result.stderr
+        
         except subprocess.TimeoutExpired:
+            log_content += "ERROR: Command timed out!\n"
+            if log_path:
+                try:
+                    with open(log_path, "w", encoding="utf-8") as f:
+                        f.write(log_content)
+                except Exception as e:
+                    logger.error(f"Failed to write timeout log to {log_path}: {str(e)}")
+            
             logger.error("Command timed out")
             return False, "", "Timeout"
 

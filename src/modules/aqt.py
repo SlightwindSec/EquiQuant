@@ -53,6 +53,12 @@ class AutomaticQuantizationTool:
         quant_data_save_path: str,
     ) -> str:
         cmd = (
+            # TODO: transformers 版本切换
+            # 不同模型需要不同的 transformers 版本
+            # deepseek v32 需要 transformers==4.48.2
+            # qwen3.5 需要 transformers>=5.2.0
+            # 添加代理参数
+            # pip install transformers==4.57.6 (替换为实际版本)
             f"export ASCEND_RT_VISIBLE_DEVICES={shlex.quote(self.visible_devices)}; "
             f"export OMP_NUM_THREADS={self.omp_num_threads}; "
             f"python -m src.aqt.compute_sensitivity_scores "

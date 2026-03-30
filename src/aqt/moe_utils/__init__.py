@@ -2,8 +2,11 @@ from ..utils.common import is_transformers_ge
 
 
 NEED_CONVERT_MOE = {
+    "qwen3_5": False,
+    "qwen3_5_text": False,
     "qwen3_5_moe": True,
     "qwen3_5_moe_text": True,
+    "qwen3": False,
     "qwen3_moe": is_transformers_ge("5.0.0"),
     "deepseek_v32": is_transformers_ge("5.0.0"),
 }

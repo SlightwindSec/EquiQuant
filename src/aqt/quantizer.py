@@ -1,6 +1,5 @@
 import torch
-import torch.nn as nn
-from typing import Tuple, Optional, Literal
+from typing import Tuple, Literal
 
 
 class Quantizer:
@@ -8,117 +7,123 @@ class Quantizer:
         self,
         quant_type: Literal["minmax", "ssz"] = "minmax",
         quant_bits: int = 8,
-        quant_sym: bool = True,
-        group_size: int = 0,
         percentile: float = 0.999,
     ):
         self.quant_type = quant_type.lower()
         self.quant_bits = quant_bits
-        self.quant_sym = quant_sym
         self.percentile = percentile
-        self.group_size = group_size
 
-        if self.group_size != 0:
-            raise NotImplementedError("Currently not support per_group.")
+        if not (2 <= quant_bits <= 8):
+            raise ValueError(f"quant_bits must be between 2 and 8, got {quant_bits}")
 
-        self.n_levels = 2**quant_bits
-
-        if quant_sym:
-            self.qmin = -(2 ** (quant_bits - 1))
-            self.qmax = (2 ** (quant_bits - 1)) - 1
-            self.dtype = torch.int8
-        else:
-            self.qmin = 0
-            self.qmax = self.n_levels - 1
-            self.dtype = torch.uint8
-
-        self._scale: Optional[torch.Tensor] = None
-        self._zero_point: Optional[torch.Tensor] = None
+        self.qmax = (1 << (quant_bits - 1)) - 1
+        self.qmin = -(1 << (quant_bits - 1))
+        
+        self.dtype = torch.int8
 
     @torch.no_grad()
-    def find_params(
-        self,
-        weight: torch.Tensor,
-        is_weight: bool = True,
-    ) -> None:
-        if not is_weight:
-            raise NotImplementedError("Only weight quantization is supported now!")
+    def find_params(self, weight: torch.Tensor) -> None:
         if weight.dim() != 2:
             raise ValueError(f"Weight tensor must be 2D, got shape {weight.shape}")
 
         if self.quant_type == "minmax":
-            self._find_params_minmax(weight)
+            w_min = weight.min(dim=1, keepdim=True)[0]
+            w_max = weight.max(dim=1, keepdim=True)[0]
+            
         elif self.quant_type == "ssz":
-            self._find_params_ssz(weight)
+            w_min = torch.quantile(weight.float(), 1 - self.percentile, dim=1, keepdim=True).to(weight.dtype)
+            w_max = torch.quantile(weight.float(), self.percentile, dim=1, keepdim=True).to(weight.dtype)
+            
         else:
             raise ValueError(f"Unsupported quant_type: {self.quant_type}")
 
-    def _find_params_minmax(self, weight: torch.Tensor) -> None:
-        w_min = weight.min(dim=1, keepdim=True)[0]
-        w_max = weight.max(dim=1, keepdim=True)[0]
+        w_min = torch.clamp(w_min, max=0.0)
+        w_max = torch.clamp(w_max, min=0.0)
 
-        self._calculate_scale_zp(w_min, w_max, weight.device)
+        divisor = float(self.qmax - self.qmin)
+        scale = (w_max - w_min) / divisor
+        scale = torch.clamp(scale, min=1e-8)
 
-    def _find_params_ssz(self, weight: torch.Tensor) -> None:
-        if self.quant_sym:
-            w_abs_max = torch.quantile(weight.abs(), self.percentile, dim=1, keepdim=True)
-            w_min = -w_abs_max
-            w_max = w_abs_max
-        else:
-            lower_percentile = 1.0 - self.percentile
-            w_min = torch.quantile(weight, lower_percentile, dim=1, keepdim=True)
-            w_max = torch.quantile(weight, self.percentile, dim=1, keepdim=True)
+        zp = torch.round(self.qmin - w_min / scale)
+        zp = torch.clamp(zp, self.qmin, self.qmax)
 
-        self._calculate_scale_zp(w_min, w_max, weight.device)
-
-    def _calculate_scale_zp(self, w_min: torch.Tensor, w_max: torch.Tensor, device: torch.device) -> None:
-        out_features = w_min.shape[0]
-
-        if self.quant_sym:
-            w_abs_max = torch.max(w_min.abs(), w_max.abs())
-            self._scale = w_abs_max / (2 ** (self.quant_bits - 1) - 1)
-            self._zero_point = torch.zeros(
-                out_features, 1, dtype=torch.float32, device=device
-            )
-        else:
-            self._scale = (w_max - w_min) / (self.qmax - self.qmin)
-            self._scale = torch.clamp(self._scale, min=1e-8)
-            self._zero_point = torch.round(self.qmin - w_min / self._scale)
-
-        self._scale = torch.clamp(self._scale, min=1e-8)
+        return scale, zp.to(torch.int8)
 
     @torch.no_grad()
     def quantize_weight(
         self,
         weight: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        self.find_params(weight, is_weight=True)
+        scale, zp = self.find_params(weight)
 
-        if self._scale is None or self._zero_point is None:
-            raise RuntimeError("Quantization parameters not found.")
+        if scale is None or zp is None:
+            raise RuntimeError("Parameters not found.")
 
-        scale_float = self._scale.to(weight.dtype)
-        zp_float = self._zero_point.to(weight.dtype)
+        scale = scale.to(weight.dtype)
+        zp = zp.to(weight.dtype)
+
+        quant_weight = torch.round(weight / scale) + zp
+        quant_weight = torch.clamp(quant_weight, self.qmin, self.qmax)
         
-        quant_weight_float = torch.round(weight / scale_float) + zp_float
-        quant_weight_float = torch.clamp(quant_weight_float, self.qmin, self.qmax)
-        quant_weight = quant_weight_float.to(self.dtype)
+        return quant_weight.to(self.dtype), scale, zp
 
-        return quant_weight, self._scale.float(), self._zero_point.float()
-
+    @staticmethod
     @torch.no_grad()
     def dequantize_weight(
-        self,
         quant_weight: torch.Tensor,
         scale: torch.Tensor,
-        zero_point: torch.Tensor,
-        dtype: torch.dtype,
-        device: torch.device,
+        zp: torch.Tensor,
+        out_dtype: torch.dtype = torch.float16,
     ) -> torch.Tensor:
-        quant_weight = quant_weight.float().to(device)
-        scale = scale.to(device)
-        zero_point = zero_point.to(device)
-        dequant_weight = ((quant_weight - zero_point) * scale).to(dtype)
+        device = quant_weight.device
 
-        del quant_weight, scale, zero_point
+        qw_float = quant_weight.to(out_dtype)
+        zp_float = zp.to(device=device, dtype=out_dtype)
+        s_float = scale.to(device=device, dtype=out_dtype)
+
+        dequant_weight = (qw_float - zp_float) * s_float
+
+        del quant_weight, scale, zp
         return dequant_weight
+
+    @torch.no_grad()
+    def fake_quantize_weight(self, weight: torch.Tensor) -> torch.Tensor:
+        scale, zp = self.find_params(weight)
+
+        if scale is None or zp is None:
+            raise RuntimeError("Parameters not found.")
+
+        scale = scale.to(weight.dtype)
+        zp = zp.to(weight.dtype)
+
+        quantized = torch.round(weight / scale) + zp
+        quantized = torch.clamp(quantized, self.qmin, self.qmax)
+
+        fake_quantized = (quantized - zp) * scale
+
+        del quantized, scale, zp
+        return fake_quantized
+    
+
+def pack_4bit_to_8bit(unpacked_w: torch.Tensor) -> torch.Tensor:
+    if unpacked_w.shape[1] % 2 != 0:
+        raise ValueError("In_features (dim=1) must be divisible by 2 for 4-bit packing.")
+
+    left_half = unpacked_w[:, 0::2]
+    right_half = unpacked_w[:, 1::2]
+
+    left_half_uint8 = left_half.to(torch.uint8) & 0x0F
+    right_half_uint8 = right_half.to(torch.uint8) & 0x0F
+
+    packed_w = (left_half_uint8 << 4) | right_half_uint8
+    
+    return packed_w
+
+def unpack_8bit_to_4bit(packed_w: torch.Tensor) -> torch.Tensor:
+    M, N_half = packed_w.shape
+    unpacked_w = torch.empty((M, N_half * 2), dtype=torch.int8, device=packed_w.device)
+
+    unpacked_w[:, 0::2] = (packed_w.to(torch.int8) >> 4)
+    unpacked_w[:, 1::2] = ((packed_w << 4).to(torch.int8) >> 4)
+    
+    return unpacked_w

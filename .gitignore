@@ -213,3 +213,5 @@ features.npy
 config.yaml
 tmp
 outputs
+icl_inference_output
+extra-info

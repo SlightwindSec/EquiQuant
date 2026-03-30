@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Dict, List
 
 import torch
+import torch_npu
 from torch import Tensor, nn
 
 
@@ -33,6 +34,8 @@ def catch_model_cache(
     cache_position: List[Tensor] = []
     position_embeddings: List[Tensor] = []
     freqs_cis: List[Tensor] = []
+    start_pos: List[Tensor] = []
+    mask: List[Tensor] = []
 
     class Catcher(nn.Module):
         def __init__(self, module: nn.Module) -> None:
@@ -60,6 +63,12 @@ def catch_model_cache(
             if "freqs_cis" in kwargs:
                 if not freqs_cis:
                     freqs_cis.append(kwargs["freqs_cis"])
+            if "start_pos" in kwargs:
+                if not start_pos:
+                    start_pos.append(kwargs["start_pos"])
+            if "mask" in kwargs:
+                if not mask:
+                    mask.append(kwargs["mask"])
             raise ValueError
 
     model.model.embed_tokens.npu()
@@ -85,6 +94,10 @@ def catch_model_cache(
     if position_embeddings:
         model_cache["position_embeddings"] = position_embeddings[0]
     if freqs_cis:
-        model_cache["freqs_cis"] = freqs_cis[0]
+        model_cache["freqs_cis"] = freqs_cis[0].npu()
+    if start_pos:
+        model_cache["start_pos"] = start_pos[0]
+    if mask:
+        model_cache["mask"] = mask[0]
 
     return inps[0], model_cache

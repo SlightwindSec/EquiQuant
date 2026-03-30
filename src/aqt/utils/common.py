@@ -2,10 +2,13 @@ import gc
 import os
 import random
 from pathlib import Path
+from typing import Dict
 from packaging import version
 
 import numpy as np
 import torch
+import torch_npu
+import torch.nn as nn
 from ...utils.logger import logger
 
 
@@ -57,3 +60,7 @@ def is_transformers_ge(ve: str = "5.0.0") -> bool:
     except ImportError:
         logger.error("transformers not installed")
         return False
+
+
+def calculate_weight_size(linears: Dict[str, nn.Linear]) -> int:
+    return sum(linear.weight.numel() for linear in linears.values()) / 1024 / 1024

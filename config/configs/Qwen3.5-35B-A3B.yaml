@@ -117,7 +117,7 @@ aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集�
 aqt_quant_samples_num: 32
 aqt_quant_context_length: 2048
 # 敏感度指标
-aqt_sensitivity_metric: ["mse", "cosine", "relative_l2", "kl_div"]
+aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]
 # 回退预算
 aqt_initial_budget_mb: 0
 aqt_budget_step_mb: 200

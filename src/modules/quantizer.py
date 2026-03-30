@@ -50,6 +50,7 @@ class BaseQuantizer(abc.ABC):
         output_weights_path: str,
         hybrid_quant_schema_path: str,
         hybrid_quant_schema_re_path: str,
+        quant_log_path: str,
     ):
         """
         Args:
@@ -60,6 +61,7 @@ class BaseQuantizer(abc.ABC):
             output_weights_path (str): 本次运行量化权重输出路径
             hybrid_quant_schema_path (str): 本次aqt得到的混合量化配置路径
             hybrid_quant_schema_path (str): 本次aqt得到的混合量化正则化配置路径
+            quant_log_path (str): 量化过程日志路径
         """
         self.config = quant_config
         self.base_model_path = base_model_path
@@ -68,6 +70,7 @@ class BaseQuantizer(abc.ABC):
         self.output_weights_path = output_weights_path
         self.hybrid_quant_schema_path = hybrid_quant_schema_path
         self.hybrid_quant_schema_re_path = hybrid_quant_schema_re_path
+        self.quant_log_path = quant_log_path
 
         self._generate_quant_config()
 
@@ -426,7 +429,7 @@ class ModelslimQuantizer(BaseQuantizer):
                 f"--trust_remote_code {self.config['trust_remote_code']}"
             )
             full_cmd = env_prefix + cmd
-            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=36000)
+            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=36000, log_path=self.quant_log_path)
             if not success:
                 logger.error(f"Modelslim quantization failed. Stderr: {stderr}")
                 raise Exception("Modelslim failed.")
@@ -690,7 +693,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
             )
             cmd = f"python {self.output_config_path} "
             full_cmd = env_prefix + cmd
-            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=10800)
+            success, stdout, stderr = ShellRunner.run_cmd(full_cmd, timeout=10800, log_path=self.quant_log_path)
             if not success:
                 logger.error(f"LLMCompressor quantization failed. Stderr: {stderr}")
                 raise Exception("LLMCompressor failed.")

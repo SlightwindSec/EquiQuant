@@ -5,6 +5,7 @@ from typing import Dict, Any
 from ..utils.logger import logger
 
 import torch
+import torch_npu
 from torch import Tensor, nn
 
 from transformers import AutoModelForCausalLM
@@ -15,17 +16,12 @@ from .utils.model import (
 )
 from .ptq import PostTrainingQuantization
 from .utils.data import prepare_calibration_samples
-from .utils.common import seed_everything, cleanup_memory
+from .utils.common import seed_everything, cleanup_memory, calculate_weight_size
 from .moe_utils import NEED_CONVERT_MOE, CONVERT_MOE_FUNC
 from .sensitivity import (
     get_layer_sensitivity_group_mapping,
     calculate_losses,
-    plot_all_visuals,
 )
-
-
-def _calculate_weight_size(linears: Dict[str, nn.Linear]) -> int:
-    return sum(linear.weight.numel() for linear in linears.values()) / 1024 / 1024
 
 
 def _compute_sensitivity_scores(
@@ -41,10 +37,17 @@ def _compute_sensitivity_scores(
 
     logger.info("Gathering inputs from Embeddings...")
     inps, model_cache = catch_model_cache(model=model, input_ids=input_ids)
+    if args.is_deepseek_v32:
+        inps = (inps[0], None)
     logger.info(f"inps shape: {inps[0].shape}")
     logger.info("Inputs gathered.")
 
-    num_experts = model.config.n_routed_experts if hasattr(model.config, "n_routed_experts") else model.config.num_experts
+    if hasattr(model.config, "num_experts"):
+        num_experts = model.config.num_experts
+    elif hasattr(model.config, "n_routed_experts"):
+        num_experts = model.config.n_routed_experts
+    else:
+        num_experts = 0
     num_layers = model.config.num_hidden_layers
     prefix = "model.language_model.layers" if args.is_mm else "model.layers"
 
@@ -52,7 +55,7 @@ def _compute_sensitivity_scores(
     sensitivity_metrics = args.sensitivity_metrics.split(",")
     logger.info(f"Computing sensitivity scores for {sensitivity_metrics}...")
 
-    layer_iter = adapter.generate_decoder_layers(model) if adapter else enumerate(layers)
+    layer_iter = adapter.generate_decoder_layer(model) if adapter else enumerate(layers)
 
     for layer_idx, layer in layer_iter:
         layer_idx_str = str(layer_idx)
@@ -90,10 +93,13 @@ def _compute_sensitivity_scores(
         #     layer.post_attention_layernorm.register_forward_pre_hook(_make_hook())
         # ]
 
-        inps_npu = (inps[0].npu(),)
+        inps_npu = tuple(t.npu() if t is not None else t for t in inps) 
         with torch.no_grad():
-            outs = layer(*inps_npu, **model_cache)
-        outs = outs[0] if isinstance(outs, tuple) else outs
+            layer_out = layer(*inps_npu, **model_cache)
+        if args.is_deepseek_v32:
+            outs = layer_out[0] + layer_out[1]
+        else:
+            outs = layer_out[0] if isinstance(layer_out, tuple) else layer_out
         outs = outs.detach().cpu()
 
         # r1 = r1[0]
@@ -105,7 +111,7 @@ def _compute_sensitivity_scores(
 
             layer_name = f"{prefix}.{layer_idx_str}.{name}"
             logger.info(f"Processing {layer_name}")
-            size = _calculate_weight_size(linears)
+            size = calculate_weight_size(linears)
             results = {"size": size * 2}
             quant_bits = [4, 8] if "mlp.experts" in name else [8]
             for quant_bit in quant_bits:
@@ -145,7 +151,10 @@ def _compute_sensitivity_scores(
                     # )
                 with torch.no_grad():
                     fake = layer(*inps_npu, **model_cache)
-                fake = fake[0] if isinstance(fake, tuple) else fake
+                if args.is_deepseek_v32:
+                    fake = fake[0] + fake[1]
+                else:
+                    fake = fake[0] if isinstance(fake, tuple) else fake
                 fake = fake.detach().cpu()
                 part_results["metrics"] = calculate_losses(
                     y_true=outs,
@@ -156,7 +165,7 @@ def _compute_sensitivity_scores(
 
                 # 删除量化权重，linears权重恢复为浮点权重
                 ptq.free()
-                del ptq
+                del ptq, fake
 
             if "mlp.experts" in name:
                 results["gold"] = (
@@ -178,10 +187,10 @@ def _compute_sensitivity_scores(
 
             sensitivity_scores[layer_name] = results
 
-        inps = (outs,)
+        inps = layer_out
         layer.cpu()
         # del r1, handles
-        del outs, inps_npu
+        del outs, inps_npu, layer_out
         cleanup_memory()
 
     if adapter is None:
@@ -193,9 +202,6 @@ def _compute_sensitivity_scores(
 
     with open(args.sensitivity_scores_save_path, "w") as f:
         json.dump(sensitivity_scores, f, indent=4)
-    
-    logger.info("plotting all visuals...")
-    plot_all_visuals(args.sensitivity_scores_save_path, num_layers)
 
 
 def main() -> None:
