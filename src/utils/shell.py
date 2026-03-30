@@ -8,52 +8,62 @@ class ShellRunner:
     @staticmethod
     def run_cmd(cmd, timeout=None, log_path=None):
         logger.info(f"Executing: {cmd}")
+        log_file = None
+        if log_path:
+            try:
+                log_file = open(log_path, "w", encoding="utf-8")
+            except Exception as e:
+                logger.error(f"Failed to open log file {log_path}: {e}")
 
-        log_content = f"===== Command executed at: {os.popen('date').read().strip()} =====\n"
-        log_content += f"Command: {cmd}\n"
-        log_content += "=" * 80 + "\n"
-        
+        stdout_lines = []
+        process = None
         try:
-            result = subprocess.run(
+            process = subprocess.Popen(
                 cmd,
                 shell=True,
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, 
                 text=True,
-                timeout=timeout,
                 executable="/bin/bash",
                 encoding="utf-8",
                 errors="replace",
+                start_new_session=True
             )
 
-            log_content += f"Return code: {result.returncode}\n\n"
-            log_content += "----- STDOUT -----\n"
-            log_content += result.stdout + "\n\n"
-            log_content += "----- STDERR -----\n"
-            log_content += result.stderr + "\n"
+            for line in process.stdout:
+                stdout_lines.append(line)
+                if log_file:
+                    log_file.write(line)
+                    log_file.flush()
 
-            if log_path:
-                try:
-                    with open(log_path, "w", encoding="utf-8") as f:
-                        f.write(log_content)
-                    logger.info(f"Command log saved to: {log_path}")
-                except Exception as e:
-                    logger.error(f"Failed to write log to {log_path}: {str(e)}")
+            process.wait(timeout=timeout)
+            return_code = process.returncode
 
-            if result.returncode != 0:
-                logger.error(f"Command failed: {result.stderr}")
-            return result.returncode == 0, result.stdout, result.stderr
-        
+            if return_code != 0:
+                logger.error(f"Command failed with code {return_code}")
+
+            return return_code == 0, "".join(stdout_lines), ""
+
         except subprocess.TimeoutExpired:
-            log_content += "ERROR: Command timed out!\n"
-            if log_path:
+            logger.error(f"Command timed out after {timeout} seconds: {cmd}")
+
+            if process:
                 try:
-                    with open(log_path, "w", encoding="utf-8") as f:
-                        f.write(log_content)
-                except Exception as e:
-                    logger.error(f"Failed to write timeout log to {log_path}: {str(e)}")
+                    os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
             
-            logger.error("Command timed out")
-            return False, "", "Timeout"
+            return False, "".join(stdout_lines), "Timeout"
+
+        except Exception as e:
+            logger.error(f"Command execution error: {str(e)}")
+            return False, "".join(stdout_lines), f"Exception: {str(e)}"
+
+        finally:
+            if log_file:
+                log_file.close()
+            if process and process.stdout:
+                process.stdout.close()
 
 
 class AsyncProcess:

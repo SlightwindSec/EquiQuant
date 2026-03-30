@@ -206,7 +206,7 @@ class EquiQuantEngine:
                         break
 
                     # Step 2: 量化器获取量化配置生成量化所需yaml/py
-                    quant_log_path = os.path.json(current_run_dir, f"{self.quantization_tool}.log")
+                    quant_log_path = os.path.join(current_run_dir, f"{self.quantization_tool}.log")
                     quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]
                     quantizer = quantizer_cls(
                         quant_config=self.config["quantization"],

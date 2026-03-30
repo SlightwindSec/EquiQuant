@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Callable, Dict, List, Optional
 
 import torch
+import torch_npu
 import torch.nn.functional as F
 from ..utils.logger import logger
 
@@ -29,7 +30,7 @@ def cosine_sim(
     y_fake: torch.Tensor,
 ) -> float:
     cosine_sim = F.cosine_similarity(y_true, y_fake, dim=-1)
-    cosine_sim_loss = 1.0 - cosine_sim.mean().item()
+    cosine_sim_loss = max(0.0, 1.0 - cosine_sim.mean().item())
     return cosine_sim_loss
 
 
@@ -85,23 +86,25 @@ def calculate_losses(
             f"No metrics specified, defaulting to all supported metrics: {metrics}"
         )
 
-    y_true = y_true.float()
-    y_fake = y_fake.float()
+    y_true_npu = y_true.float().npu()
+    y_fake_npu = y_fake.float().npu()
 
-    if y_true.dim() == 3:
-        D = y_true.shape[-1]
-        y_true = y_true.view(-1, D)
-        y_fake = y_fake.view(-1, D)
+    if y_true_npu.dim() == 3:
+        D = y_true_npu.shape[-1]
+        y_true_npu = y_true_npu.view(-1, D)
+        y_fake_npu = y_fake_npu.view(-1, D)
 
     results = {}
     for metric_name in metrics:
         metric_func = get_sensitivity_metric(metric_name)
         try:
-            result = metric_func(y_true, y_fake)
+            result = metric_func(y_true_npu, y_fake_npu)
             results[metric_name] = result
         except Exception as e:
             logger.warning(f"计算 {metric_name} 时出错: {e}")
             results[metric_name] = float("nan")
+
+    del y_true_npu, y_fake_npu
     return results
 
 

@@ -99,7 +99,9 @@ class AutomaticQuantizationTool:
                 save_dir, quant_data_path, quant_data_save_path
             )
             success, stdout, stderr = ShellRunner.run_cmd(
-                compute_sensitivity_scores_cmd, timeout=10800
+                compute_sensitivity_scores_cmd,
+                timeout=10800,
+                log_path=os.path.join(self.results_root, "compute_sensitivity_scores.log")
             )
             if not success or not os.path.exists(self.sensitivity_scores_save_path):
                 logger.error("Computing sensitivity scores failed.")
@@ -143,7 +145,11 @@ class AutomaticQuantizationTool:
             hybrid_quant_schema_path,
             hybrid_quant_schema_re_path,
         )
-        success, stdout, stderr = ShellRunner.run_cmd(run_cmd, timeout=10800)
+        success, stdout, stderr = ShellRunner.run_cmd(
+            run_cmd,
+            timeout=10800,
+            log_path=os.path.join(self.results_root, "run.log")
+        )
 
         if not success:
             logger.error("AQT failed to get hybrid quant schema.")

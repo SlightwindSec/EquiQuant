@@ -32,8 +32,6 @@ def _compute_sensitivity_scores(
     if adapter is None:
         use_cache = model.config.use_cache
         model.config.use_cache = False
-    layers = model.model.layers
-    logger.info(f"This model gets {len(layers)} layers.")
 
     logger.info("Gathering inputs from Embeddings...")
     inps, model_cache = catch_model_cache(model=model, input_ids=input_ids)
@@ -49,13 +47,14 @@ def _compute_sensitivity_scores(
     else:
         num_experts = 0
     num_layers = model.config.num_hidden_layers
+    logger.info(f"This model gets {num_layers} layers.")
     prefix = "model.language_model.layers" if args.is_mm else "model.layers"
 
     sensitivity_scores = {}
     sensitivity_metrics = args.sensitivity_metrics.split(",")
     logger.info(f"Computing sensitivity scores for {sensitivity_metrics}...")
 
-    layer_iter = adapter.generate_decoder_layer(model) if adapter else enumerate(layers)
+    layer_iter = adapter.generate_decoder_layer(model) if adapter else enumerate(model.model.layers)
 
     for layer_idx, layer in layer_iter:
         layer_idx_str = str(layer_idx)
@@ -120,7 +119,6 @@ def _compute_sensitivity_scores(
                     layers=linears,
                     quant_type=args.quant_type,
                     quant_bit=quant_bit,
-                    quant_sym=True,
                     group_size=0,
                 )
                 # 浮点权重下 cpu，linears权重变为伪量化权重，上 npu
@@ -187,7 +185,7 @@ def _compute_sensitivity_scores(
 
             sensitivity_scores[layer_name] = results
 
-        inps = layer_out
+        inps = (layer_out,) if isinstance(layer_out, Tensor) else layer_out
         layer.cpu()
         # del r1, handles
         del outs, inps_npu, layer_out
