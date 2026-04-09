@@ -2,8 +2,8 @@ import time
 import requests
 import json
 import shlex
-from utils.shell import AsyncProcess
-from utils.logger import logger
+from ..utils.shell import AsyncProcess
+from ..utils.logger import logger
 
 
 class VllmServer:
@@ -25,17 +25,17 @@ class VllmServer:
         self.config = server_config
         self.model_path = model_path
         self.log_file = log_file_path
-        
+
         # 构造健康检查 URL
         self.health_check_url = (
             f"http://{self.config['host']}:{self.config['port']}"
             f"{self.config['health_check_endpoint']}"
         )
-        self.startup_timeout = self.config['startup_timeout']
-        
+        self.startup_timeout = self.config["startup_timeout"]
+
         # 构造完整的 shell 命令
         self.cmd = self._build_command()
-        
+
         # 初始化异步进程管理器
         self.process = AsyncProcess(self.cmd, self.log_file)
         logger.debug(f"VLLM command constructed: {self.cmd}")
@@ -44,15 +44,15 @@ class VllmServer:
         """
         从 env_vars 配置构建 'export K1=V1; export K2=V2; ' 字符串。
         """
-        env_vars = self.config.get('env_vars', {})
+        env_vars = self.config.get("env_vars", {})
         if not env_vars:
             return ""
-            
+
         parts = []
         for key, value in env_vars.items():
             # shlex.quote 确保值被正确转义，例如 "0.11.0"
             parts.append(f"export {key}={shlex.quote(str(value))};")
-        return " ".join(parts) + " " # 结尾的空格
+        return " ".join(parts) + " "  # 结尾的空格
 
     def _build_command(self):
         """
@@ -60,9 +60,9 @@ class VllmServer:
         """
         # 1. 环境变量
         env_prefix = self._build_env_prefix()
-        
+
         # 2. Python 入口点
-        entrypoint = self.config['entrypoint']
+        entrypoint = self.config["entrypoint"]
         cmd_parts = [f"python -m {entrypoint}"]
 
         # 3. 添加动态/核心参数
@@ -70,7 +70,7 @@ class VllmServer:
         cmd_parts.append(f"--port {self.config['port']}")
 
         # 4. 遍历配置中的 'args' 来构建其他参数
-        for key, value in self.config.get('args', {}).items():
+        for key, value in self.config.get("args", {}).items():
             if value is True:
                 # e.g., trust-remote-code: true -> --trust-remote-code
                 cmd_parts.append(f"--{key}")
@@ -80,30 +80,34 @@ class VllmServer:
             elif isinstance(value, dict):
                 # e.g., additional_config: {...} -> --additional_config='{"...":...}'
                 # 序列化为紧凑的 JSON, 并使用 shlex.quote 添加外层引号
-                json_str = json.dumps(value, separators=(',', ':'))
+                json_str = json.dumps(value, separators=(",", ":"))
                 cmd_parts.append(f"--{key}={shlex.quote(json_str)}")
             else:
                 # e.g., tp: 2 -> --tp 2
                 cmd_parts.append(f"--{key} {shlex.quote(str(value))}")
-        
+
         full_command_str = " ".join(cmd_parts)
+        # TODO: transformers 版本切换
+        # 较新的 vllm vllm-ascend 一般使用 transformers==4.57.6
+        # 添加代理参数
+        # pip install transformers==4.57.6
         return env_prefix + full_command_str
 
     def start(self):
         """启动 VLLM 进程并等待其就绪。"""
         logger.info(f"Starting VLLM server for model: {self.model_path}")
         self.process.start()
-        
+
         logger.info(f"Waiting for server to be ready at {self.health_check_url} ...")
         if not self._wait_for_ready():
-            logger.error("VLLM server failed to start. Check log: {self.log_file}")
+            logger.error(f"VLLM server failed to start. Check log: {self.log_file}")
             # 尝试停止僵尸进程
             try:
                 self.stop()
             except:
                 pass
             return False
-            
+
         logger.info("VLLM server started successfully.")
         return True
 
@@ -127,8 +131,8 @@ class VllmServer:
             except Exception as e:
                 # 其他错误 (e.g., 500 internal server error during init)
                 logger.debug(f"Health check received non-connection error: {e}")
-            
-            time.sleep(5) # 5秒轮询间隔
-            
+
+            time.sleep(5)  # 5秒轮询间隔
+
         logger.error(f"Server startup timed out after {self.startup_timeout} seconds.")
         return False
