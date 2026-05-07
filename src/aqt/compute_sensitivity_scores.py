@@ -57,6 +57,8 @@ def _compute_sensitivity_scores(
     layer_iter = adapter.generate_decoder_layer(model) if adapter else enumerate(model.model.layers)
 
     for layer_idx, layer in layer_iter:
+        if layer_idx > 2:
+            break
         layer_idx_str = str(layer_idx)
         logger.info(f"Processing layer {layer_idx_str}.")
 
@@ -236,7 +238,7 @@ def main() -> None:
             args.model_name_or_path,
             trust_remote_code=True,
             torch_dtype="auto",
-            device_map="cpu",
+            device_map="auto",
             local_files_only=True,
         )
         model_type = model.config.model_type

@@ -210,7 +210,6 @@ workspace
 kernel_meta/
 fusion_result.json
 features.npy
-config.yaml
 tmp
 outputs
 icl_inference_output
