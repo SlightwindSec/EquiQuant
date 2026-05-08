@@ -79,19 +79,6 @@ def _compute_sensitivity_scores(
             cleanup_memory()
             continue
 
-        # r1: List[Tensor] = [None]
-
-        # def _make_hook():
-        #     def hook(module, input):
-        #         t = input[0] if isinstance(input, tuple) else input
-        #         r1[0] = t.detach().cpu()
-
-        #     return hook
-
-        # handles = [
-        #     layer.post_attention_layernorm.register_forward_pre_hook(_make_hook())
-        # ]
-
         inps_npu = tuple(t.npu() if t is not None else t for t in inps) 
         with torch.no_grad():
             layer_out = layer(*inps_npu, **model_cache)
@@ -101,18 +88,12 @@ def _compute_sensitivity_scores(
             outs = layer_out[0] if isinstance(layer_out, tuple) else layer_out
         outs = outs.detach().cpu()
 
-        # r1 = r1[0]
-
-        # for h in handles:
-        #     h.remove()
-
         for name, linears in subset.items():
-
             layer_name = f"{prefix}.{layer_idx_str}.{name}"
             logger.info(f"Processing {layer_name}")
             size = calculate_weight_size(linears)
             results = {"size": size * 2}
-            quant_bits = [4, 8] if "mlp.experts" in name else [8]
+            quant_bits = [4, 8]
             for quant_bit in quant_bits:
                 logger.info(f"quantizing to {quant_bit}-bit...")
                 ptq = PostTrainingQuantization(
@@ -125,28 +106,6 @@ def _compute_sensitivity_scores(
                 ptq.run()
                 logger.info("computing losses...")
                 part_results = {"size": size * quant_bit / 8}
-                # if "mlp" in name:
-                #     with torch.no_grad():
-                #         r2_fake = layer.mlp(layer.post_attention_layernorm(r1.npu()))
-                #     r2_fake = r2_fake[0] if isinstance(r2_fake, tuple) else r2_fake
-                #     r2_fake = r2_fake.detach().cpu() + r1
-                #     part_results["metrics"] = calculate_losses(
-                #         y_true=outs,
-                #         y_fake=r2_fake,
-                #         metrics=sensitivity_metrics,
-                #     )
-                # else:
-                    # with torch.no_grad():
-                    #     r1_fake = layer.self_attn(
-                    #         layer.input_layernorm(inps_npu[0]), **model_cache
-                    #     )
-                    # r1_fake = r1_fake[0] if isinstance(r1_fake, tuple) else r1_fake
-                    # r1_fake = r1_fake.detach().cpu() + inps[0]
-                    # part_results["metrics"] = calculate_losses(
-                    #     y_true=r1,
-                    #     y_fake=r1_fake,
-                    #     metrics=sensitivity_metrics,
-                    # )
                 with torch.no_grad():
                     fake = layer(*inps_npu, **model_cache)
                 if args.is_deepseek_v32:
@@ -165,21 +124,16 @@ def _compute_sensitivity_scores(
                 ptq.free()
                 del ptq, fake
 
-            if "mlp.experts" in name:
-                results["gold"] = (
-                    (
-                        results["4-bit"]["metrics"]["mse"]
-                        - results["8-bit"]["metrics"]["mse"]
-                    )
-                    * 1e8
-                    / (results["8-bit"]["size"] - results["4-bit"]["size"])
-                )
-            else:
-                results["gold"] = (
-                    results["8-bit"]["metrics"]["mse"]
-                    * 1e8
-                    / (results["size"] - results["8-bit"]["size"])
-                )
+            # Scale MSE to avoid extremely small values (e.g., 1e-10)
+            mse_scale = 1e10
+            mse4 = results["4-bit"]["metrics"]["mse"] * mse_scale
+            mse8 = results["8-bit"]["metrics"]["mse"] * mse_scale
+
+            score4 = mse4 / max(results["size"] - results["4-bit"]["size"], 1e-6)
+            score8 = mse8 / max(results["size"] - results["8-bit"]["size"], 1e-6)
+
+            results["score4"] = score4
+            results["score8"] = score8
 
             logger.info(f"{layer_name} = {results}")
 

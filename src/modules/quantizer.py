@@ -31,8 +31,8 @@ SUPPORTED_QUANTIZERS = ["msmodelslim", "llmcompressor"]
 SUPPORTED_QUANTIZATION_SCHEMAS = [
     "float",
     "w8a8_dynamic",
-    "w4a8_dynamic_pergroup",
-    "w4a8_dynamic_perchannel",
+    "w8a8_default",
+    "w4a8_dynamic",
 ]
 
 
@@ -358,26 +358,21 @@ class ModelslimQuantizer(BaseQuantizer):
         with open(self.hybrid_quant_schema_path) as f:
             hybrid_quant_schema = json.load(f)
 
-        w4a8_perchannel_cfg = hybrid_quant_schema.get("w4a8_dynamic_perchannel", {"include": [], "exclude": []})
-        w4a8_pergroup_cfg = hybrid_quant_schema.get("w4a8_dynamic_pergroup", {"include": [], "exclude": []})
-        w8a8_cfg = hybrid_quant_schema.get("w8a8_dynamic", {"include": [], "exclude": []})
+        w4a8_dynamic_cfg = hybrid_quant_schema.get("w4a8_dynamic", {"include": [], "exclude": []})
+        w8a8_dynamic_cfg = hybrid_quant_schema.get("w8a8_dynamic", {"include": [], "exclude": []})
+        w8a8_default_cfg = hybrid_quant_schema.get("w8a8_default", {"include": [], "exclude": []})
 
-        anchor_mapping = {}
         for process in base["spec"]["process"]:
             if process["type"] == "group":
                 for config in process["configs"]:
-                    if config["qconfig"]["weight"]["dtype"] == "int4":
-                        if config["qconfig"]["weight"]["scope"] == "per_group":
-                            config.update(w4a8_pergroup_cfg)
-                            anchor_mapping["default_w4a8_dynamic_pergroup"] = id(config)
-                        elif config["qconfig"]["weight"]["scope"] == "per_channel":
-                            config.update(w4a8_perchannel_cfg)
-                            anchor_mapping["default_w4a8_dynamic_perchannel"] = id(
-                                config
-                            )
-                    elif config["qconfig"]["weight"]["dtype"] == "int8":
-                        config.update(w8a8_cfg)
-                        anchor_mapping["default_w8a8_dynamic"] = id(config)
+                    qc = config["qconfig"]
+                    if qc["weight"]["dtype"] == "int4":
+                        config.update(w4a8_dynamic_cfg)
+                    elif qc["weight"]["dtype"] == "int8":
+                        if qc["act"]["scope"] == "per_token":
+                            config.update(w8a8_dynamic_cfg)
+                        elif qc["act"]["scope"] == "per_tensor":
+                            config.update(w8a8_default_cfg)
 
         with open(self.output_config_path, "w") as f:
             yaml.dump(base, f, default_flow_style=False, sort_keys=False)
@@ -454,9 +449,9 @@ class LLMCompressorQuantizer(BaseQuantizer):
         with open(self.hybrid_quant_schema_re_path) as f:
             hybrid_quant_schema_re = json.load(f)
 
-        w8a8_targets = hybrid_quant_schema_re.get("w8a8_dynamic", [])
-        w4a8_perchannel_targets = hybrid_quant_schema_re.get("w4a8_dynamic_perchannel", [])
-        w4a8_pergroup_targets = hybrid_quant_schema_re.get("w4a8_dynamic_pergroup", [])
+        w8a8_dynamic_targets = hybrid_quant_schema_re.get("w8a8_dynamic", [])
+        w8a8_default_targets = hybrid_quant_schema_re.get("w8a8_default", [])
+        w4a8_dynamic_targets = hybrid_quant_schema_re.get("w4a8_dynamic", [])
 
         ignores = [
             "lm_head",
@@ -583,8 +578,22 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 f"                        strategy: token",
                 f"                        dynamic: true",
                 f"                        symmetric: true",
-                f"                    targets: {_fmt_yaml_list(w8a8_targets, 20)}",
+                f"                    targets: {_fmt_yaml_list(w8a8_dynamic_targets, 20)}",
                 f"                group_1:",
+                f"                    weights:",
+                f"                        num_bits: 8",
+                f"                        type: int",
+                f"                        strategy: channel",
+                f"                        dynamic: false",
+                f"                        symmetric: true",
+                f"                    input_activations:",
+                f"                        num_bits: 8",
+                f"                        type: int",
+                f"                        strategy: tensor",
+                f"                        dynamic: false",
+                f"                        symmetric: true",
+                f"                    targets: {_fmt_yaml_list(w8a8_default_targets, 20)}",
+                f"                group_2:",
                 f"                    weights:",
                 f"                        num_bits: 4",
                 f"                        type: int",
@@ -597,22 +606,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 f"                        strategy: token",
                 f"                        dynamic: true",
                 f"                        symmetric: true",
-                f"                    targets: {_fmt_yaml_list(w4a8_perchannel_targets, 20)}",
-                f"                group_2:",
-                f"                    weights:",
-                f"                        num_bits: 4",
-                f"                        type: int",
-                f"                        strategy: group",
-                f"                        group_size: 64",
-                f"                        dynamic: false",
-                f"                        symmetric: true",
-                f"                    input_activations:",
-                f"                        num_bits: 8",
-                f"                        type: int",
-                f"                        strategy: token",
-                f"                        dynamic: true",
-                f"                        symmetric: true",
-                f"                    targets: {_fmt_yaml_list(w4a8_pergroup_targets, 20)}",
+                f"                    targets: {_fmt_yaml_list(w4a8_dynamic_targets, 20)}",
                 f"'''",
                 f"",
             ]

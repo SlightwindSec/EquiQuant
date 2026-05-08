@@ -1,28 +1,133 @@
-base_model_path: "/home/weight/Qwen3-30B-A3B"
-is_mm: false
-is_deepseek_v32: false
+base_model_path: "/home/weight/Qwen3-30B-A3B"  # required
+is_mm: false  # optional, default to false
+is_deepseek_v32: false  # optional, default to false
 
 # -----------------------------------------------
 # 工作区 (运行时文件)
 # -----------------------------------------------
-workspace_base_dir: "workspace"
-workspace_current_run_dir: "current_run"
-workspace_best_weights_dir: "best_weights"
-workspace_quant_weights_dir: "quantized_weights"
+workspace_base_dir: "workspace"  # optional, default to "workspace"
+workspace_current_run_dir: "current_run"  # optional, default to "current_run"
+workspace_best_weights_dir: "best_weights"  # optional, default to "best_weights"
+workspace_quant_weights_dir: "quantized_weights"  # optional, default to "quantized_weights"
 
 # -----------------------------------------------
 # 核心调优策略（仅无 AQT 时使用固定回退层）
 # -----------------------------------------------
-strategy_initial_fallback_layers:
+strategy_initial_fallback_layers:  # optional, default to ["lm_head"]
   - 'lm_head'
+disable_names: []  # optional, default to []
+
+# -----------------------------------------------
+# Automatic Quantization Tool (AQT)
+# -----------------------------------------------
+aqt_quant_data_path: "/home/f50049642/calib_data.txt"  # required
+aqt_omp_num_threads: 32  # optional, default to 32
+aqt_ascend_visible_devices: "0"  # optional, default to "0"
+aqt_quant_samples_num: 32  # optional, default to 128
+aqt_quant_context_length: 2048  # optional, default to 4096
+aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]  # optional, default to ["mse", "cosine", "relative_l2", "kl_div"]
+aqt_initial_budget_mb: 0  # optional, default to 2500MB
+aqt_budget_step_mb: 200  # optional, default to 500MB
+aqt_budget_step_down_mb: 100  # optional, default to 250MB
+aqt_min_budget_mb: 0  # optional, default to 0MB
+aqt_max_budget_mb: 2000  # optional, default to 12000MB
+
+# -----------------------------------------------
+# 量化器配置
+# -----------------------------------------------
+quantization_tool: "msmodelslim"  # optional, one of ["msmodelslim", "llmcompressor"], default to "msmodelslim"
+quantization_visible_devices: "1"  # optional, default to aqt's visible devices
+quantization_model_type: "Qwen3-32B"  # optional, default to "Qwen3-32B"
+quantization_device: "npu"  # optional, default to "npu"
+
+# LLMCompressor YAML 配置模板
+# enable_smooth_quant: false  # optional, default to false
+# smooth_strength: 0.8  # optional, default to 0.8
+# quantization_calib_data_path: ""  # optional, default to aqt's calibration data path
+# num_calibration_samples: 512  # optional, default to 512
+# max_sequence_length: 2048  # optional, default to 2048
+# quantization_modifier: "PTQ"  # optional, default to "PTQ"
+
+# Modelslim YAML 配置模板
+quantization_trust_remote_code: true  # optional, default to true
+quantization_template_config:  # required
+  w_bit: 4  # optional, default to 4
+  a_bit: 8  # optional, default to 8
+
+  v1:
+    metadata:
+      config_id: qwen3-moe-w4a8-v1
+      score: 90
+      label:
+        is_sparse: false
+        kv_cache: false
+
+    qconfigs:
+      w8a8_default:
+        act:
+          scope: "per_tensor"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+
+      w8a8_dynamic:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+
+      w4a8_dynamic:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int4"
+          symmetric: true
+          method: "ssz"
+
+    process:
+      # TODO： 选择性开启 quarot
+      # - type: "quarot"
+      - type: "flex_smooth_quant"
+        enable_subgraph_type:
+          - 'norm-linear'
+          - 'ov'
+        include:
+          - "*"
+      - type: "group"
+        configs:
+          - type: "linear_quant"
+            qconfig_ref: "w4a8_dynamic"
+          - type: "linear_quant"
+            qconfig_ref: "w8a8_dynamic"
+          - type: "linear_quant"
+            qconfig_ref: "w8a8_default"
+
+    save:
+      - type: "ascendv1_saver"
+        part_file_size: 4
 
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
-evaluation_tolerance_ratio: 1.0
-disable_qwen_thinking: false
+evaluation_tolerance_ratio: 1.0  # optional, default to 1.0
+disable_qwen_thinking: false  # optional, default to false
 
-evaluation_datasets:
+evaluation_datasets:  # optional, default to {}
   aime2024:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
@@ -42,27 +147,32 @@ evaluation_datasets:
     mode: "all"
     target_accuracy: 61.62
 
-
-aisbench_timeout: 7200
-aisbench_request_rate: 0
-aisbench_retry: 2
-aisbench_batch_size: 128
-aisbench_max_out_len: 32768
-aisbench_pred_postprocessor: "extract_non_reasoning_content"
-aisbench_generation_kwargs:
+aisbench_generation_kwargs:  # optional, default to the dict below
   temperature: 0.5
   top_k: 10
+  top_p: 0.5
   top_p: 0.95
   seed: null
   repetition_penalty: 1.03
-aisbench_log_dir: "workspace/aisbench_logs"
-aisbench_default_metric_keys:
+
+
+aisbench_use_chat_template: true  # optional, default to true
+aisbench_timeout: 7200  # optional, default to 7200
+aisbench_request_rate: 0  # optional, default to 1
+aisbench_retry: 2  # optional, default to 2
+aisbench_batch_size: 128  # optional, default to 32
+aisbench_max_out_len: 32768  # optional, default to 512
+aisbench_pred_postprocessor: "extract_non_reasoning_content"  # optional, default to "extract_non_reasoning_content"
+name_suffix: "auto"  # optional, default to "auto"
+aisbench_model_directory: null  # optional, default to null
+aisbench_default_metric_keys:  # optional, default to ["final_accuracy", "accuracy", "score"]
   - "final_accuracy"
   - "accuracy"
   - "score"
-aisbench_use_chat_template: true
-aisbench_cleanup_model_config: true
-aisbench_extra_args: null
+aisbench_extra_args: null  # optional, default to null
+aisbench_cleanup_model_config: true  # optional, default to true
+aisbench_host_ip = null  # optional, default to null
+aisbench_host_port  # optional, default to null
 
 # -----------------------------------------------
 # VLLM-Ascend Server
@@ -103,117 +213,6 @@ vllm_args:
     cudagraph_mode: "FULL_DECODE_ONLY"
     cudagraph_capture_sizes: [1,2,4,8,16,32,64,128]
 
-# -----------------------------------------------
-# Automatic Quantization Tool (AQT)
-# -----------------------------------------------
-aqt_enabled: true
-aqt_results_dir: "workspace/aqt_results"
-aqt_omp_num_threads: 32
-# TODO: 根据实际情况修改用的卡号
-aqt_ascend_visible_devices: "0"
-# 校准集
-aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
-aqt_quant_samples_num: 32
-aqt_quant_context_length: 2048
-# 敏感度指标
-aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]
-# 回退预算
-aqt_initial_budget_mb: 0
-aqt_budget_step_mb: 200
-aqt_budget_step_down_mb: 100
-aqt_min_budget_mb: 0
-aqt_max_budget_mb: 2000
 
-# -----------------------------------------------
-# 量化器配置
-# -----------------------------------------------
-# quantization_tool: "llmcompressor"
-# enable_smooth_quant: false
-# smooth_strength: 0.8
-# quantization_visible_devices: "1"
-# quantization_device: "npu"
-# quantization_model_type: "Qwen3-30B"
-# quantization_calib_data_path: ""
-# num_calibration_samples: 512
-# max_sequence_length: 2048
-# quantization_modifier: "PTQ"
-quantization_tool: "msmodelslim"
-# TODO: 根据实际情况修改用的卡号
-quantization_visible_devices: "1"
-quantization_model_type: "Qwen3-30B"
-quantization_device: "npu"
-quantization_trust_remote_code: true
 
-# Modelslim YAML 配置模板
-quantization_template_config:
-  w_bit: 4  # 权重量化位数
-  a_bit: 8  # 激活量化位数
 
-  v1:
-    metadata:
-      config_id: qwen3-moe-w4a8-v1
-      score: 90
-      label:
-        is_sparse: false
-        kv_cache: false
-
-    qconfigs:
-      default_w8a8_dynamic:
-        act:
-          scope: "per_token"      # 激活值量化范围: per_token 或 per_tensor
-          dtype: "int8"           # 数据类型: int8
-          symmetric: true         # 是否对称量化
-          method: "minmax"        # 量化方法: minmax
-        weight:
-          scope: "per_channel"    # 权重量化范围: per_channel 或 per_group
-          dtype: "int8"           # 数据类型: int8
-          symmetric: true         # 是否对称量化
-          method: "minmax"        # 量化方法: minmax, ssz
-
-      default_w4a8_dynamic_perchannel:
-        act:
-          scope: "per_token"
-          dtype: "int8"
-          symmetric: true
-          method: "minmax"
-        weight:
-          scope: "per_channel"
-          dtype: "int4"
-          symmetric: true
-          method: "ssz"
-
-# default_w4a8_dynamic_pergroup:
-      #   act:
-      #     scope: "per_token"
-      #     dtype: "int8"
-      #     symmetric: true
-      #     method: "minmax"
-      #   weight:
-      #     scope: "per_group"
-      #     dtype: "int4"
-      #     symmetric: true
-      #     method: "ssz"
-      #     ext:
-      #       group_size: 64
-
-    process:
-      # TODO： 选择性开启 quarot
-      # - type: "quarot"
-      - type: "flex_smooth_quant"
-        enable_subgraph_type:
-          - 'norm-linear'
-          - 'ov'
-        include:
-          - "*"
-      - type: "group"
-        configs:
-          - type: "linear_quant"
-            qconfig_ref: "default_w4a8_dynamic_perchannel"
-          - type: "linear_quant"
-            qconfig_ref: "default_w8a8_dynamic"
-          # - type: "linear_quant"
-          #   qconfig_ref: "default_w4a8_dynamic_pergroup"
-
-    save:
-      - type: "ascendv1_saver"
-        part_file_size: 4

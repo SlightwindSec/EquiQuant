@@ -1,7 +1,7 @@
 import fnmatch
 import re
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Any
 from ...utils.logger import logger
 
 from ..sensitivity import (
@@ -15,97 +15,85 @@ class QuantLayerConfig:
     weight_bits: int
     act_bits: int
     group_size: int
+    act_scope: str = "per_token"
 
 
 class QuantLayerConfigManager:
     def __init__(
         self,
-        layer_names: List[str], 
         num_experts: int,
         num_layers: int,
+        sensitivity_scores: Dict[str, Any] = None,
+        layer_configs: Dict[str, Any] = None,
     ) -> None:
         # 补充 skip 的 layer name
         self.skips = {"embed_tokens", "mlp.gate.", "lm_head", "mlp.shared_expert_gate", "model.norm", "indexer"}
-        self.layer_names = layer_names
+        self.layer_names = sensitivity_scores.keys()
         self.num_experts = num_experts
         self.num_layers = num_layers
-        self.cfg: Dict[str, QuantLayerConfig] = self._process_hybrid_quant_config()
+        self.sensitivity_scores = sensitivity_scores
+        self.layer_configs = layer_configs or {}
+        self.cfg: Dict[str, QuantLayerConfig] = self._init_layer_quant_configs()
 
-    def _process_hybrid_quant_config(self) -> Dict[str, QuantLayerConfig]:
+    def _init_layer_quant_configs(self) -> Dict[str, QuantLayerConfig]:
+        """
+        Initialize the quantization configuration for all layers.
+        """
         cfg = {}
         for name in self.layer_names:
-            self.update_hybrid_quant_config(name=name, cfg=cfg)
+            cfg[name] = self._determine_layer_config(name)
         return cfg
 
-    def update_hybrid_quant_config(
-        self,
-        name: str,
-        cfg: Dict[str, QuantLayerConfig],
-    ) -> None:
+    def _determine_layer_config(self, name: str) -> QuantLayerConfig:
+        """
+        Determine the specific weight/activation configuration for a single layer 
+        based on priority: Skips > Existing State > Sensitivity Heuristic > Default.
+        """
+        # 1. Skip layers (Fixed Float16/BFloat16)
         if any([i in name for i in self.skips]):
-            weight_bits = 16
-            act_bits = 16
-            group_size = 0
-        else:
-            weight_bits = 4 if "mlp.experts" in name else 8
-            act_bits = 8
-            group_size = 0
+            return QuantLayerConfig(weight_bits=16, act_bits=16, group_size=0, act_scope="per_token")
+        
+        # 2. Stateful Upgrade (Loading existing configuration from a previous trial)
+        if name in self.layer_configs:
+            state = self.layer_configs[name]
+            w_bits = state["weight_bits"]
+            return QuantLayerConfig(
+                weight_bits=w_bits,
+                act_bits=8 if w_bits in (4, 8) else 16,
+                group_size=0,
+                act_scope=state["act_scope"]
+            )
 
-        cfg[name] = QuantLayerConfig(
-            weight_bits=weight_bits,
-            act_bits=act_bits,
-            group_size=group_size,
-        )
+        # 3. Efficiency Heuristic (First Trial: Choosing between W4 and W8 based on MSE/Size)
+        if name in self.sensitivity_scores:
+            data = self.sensitivity_scores[name]
+            score4 = data.get("score4")
+            score8 = data.get("score8")
 
-        self._validate_group_size_for_layer(name=name, quant_layer_cfg=cfg[name])
+            if score4 < score8:
+                return QuantLayerConfig(weight_bits=4, act_bits=8, group_size=0, act_scope="per_token")
+            else:
+                return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_tensor")
+            
+        # 4. Global Default (Standard W8 Dynamic)
+        return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_token")
 
-    def _create_quant_layers_mapping(
-        self, overwrite_act_to_8bit: bool = False
-    ) -> Dict[str, List[str]]:
+    def create_quant_layers_mapping(self) -> Dict[str, str]:
         layers_quant_mapping = {}
         for layer_name, layer_cfg in self.cfg.items():
-            if layer_cfg.weight_bits == 16 and layer_cfg.act_bits == 16:
+            if layer_cfg.weight_bits == 16:
                 layers_quant_mapping[layer_name] = "float"
-            elif layer_cfg.weight_bits == 8 and layer_cfg.act_bits == 16:
-                if overwrite_act_to_8bit:
+            elif layer_cfg.weight_bits == 8:
+                if layer_cfg.act_scope == "per_token":
                     layers_quant_mapping[layer_name] = "w8a8_dynamic"
                 else:
-                    layers_quant_mapping[layer_name] = "w8a16"
-            elif layer_cfg.weight_bits == 4 and layer_cfg.act_bits == 16:
-                if overwrite_act_to_8bit:
-                    layers_quant_mapping[layer_name] = "w4a8_dynamic"
-                else:
-                    layers_quant_mapping[layer_name] = "w4a16"
-            elif layer_cfg.weight_bits == 8 and layer_cfg.act_bits == 8:
-                layers_quant_mapping[layer_name] = "w8a8_dynamic"
-            elif layer_cfg.weight_bits == 4 and layer_cfg.act_bits == 8:
-                if layer_cfg.group_size == 0:
-                    layers_quant_mapping[layer_name] = "w4a8_dynamic_perchannel"
-                else:
-                    layers_quant_mapping[layer_name] = "w4a8_dynamic_pergroup"
-            elif layer_cfg.weight_bits == 4 and layer_cfg.act_bits == 4:
-                layers_quant_mapping[layer_name] = "w4a4_flatquant_dynamic"
+                    layers_quant_mapping[layer_name] = "w8a8_default"
+            elif layer_cfg.weight_bits == 4:
+                layers_quant_mapping[layer_name] = "w4a8_dynamic"
             else:
                 raise NotImplementedError
 
         return layers_quant_mapping
-
-    def _validate_group_size_for_layer(
-        self,
-        name: str,
-        quant_layer_cfg: QuantLayerConfig,
-    ) -> None:
-        weight_bits = quant_layer_cfg.weight_bits
-        act_bits = quant_layer_cfg.act_bits
-        group_size = quant_layer_cfg.group_size
-
-        if weight_bits == 8 and act_bits == 8:
-            if group_size != 0:
-                logger.info(
-                    "WARNING! Currently, there is no per-group support for w8a8 kernel. "
-                    f"Use group_size = 0 for layer '{name}' instead of {group_size}."
-                )
-            quant_layer_cfg.group_size = 0
 
 
 def _get_re_format(layer_names: List[str]) -> List[str]:
