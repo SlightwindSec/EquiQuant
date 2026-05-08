@@ -72,9 +72,12 @@ class AisBencher:
                 "config['evaluation']['datasets'] is empty. Nothing to benchmark."
             )
 
-    def run(self) -> Dict[str, float]:
+    def run(self, early_stop_fn=None) -> Dict[str, float]:
         """
         运行所有配置的数据集评测。
+        Args:
+            early_stop_fn (callable): 接收 (dataset_alias, accuracy) 返回 bool。
+                                     如果返回 False，则停止后续数据集的评测。
         Returns:
             dict: {dataset_alias: accuracy}
         """
@@ -122,6 +125,9 @@ class AisBencher:
                         f"AISBench command failed for {alias}. See log: {log_file}"
                     )
                     results[alias] = 0.0
+                    # 如果命令失败，也视作不达标，触发早停检查
+                    if early_stop_fn and not early_stop_fn(alias, 0.0):
+                        break
                     continue
 
                 # 尝试从输出文件中解析结果
@@ -143,6 +149,11 @@ class AisBencher:
                 # 保存解析的结果数据
                 if result_data:
                     self._save_result_data(alias, result_data)
+                
+                # 早停检查
+                if early_stop_fn and not early_stop_fn(alias, accuracy):
+                    logger.warning(f"Early stopping benchmark as dataset '{alias}' failed accuracy target.")
+                    break
         finally:
             self._cleanup_model_config()
 

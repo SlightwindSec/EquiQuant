@@ -158,19 +158,31 @@ quantization_template_config:
         kv_cache: false
 
     qconfigs:
-      default_w8a8_dynamic:
+      w8a8_default:
         act:
-          scope: "per_token"      # 激活值量化范围: per_token 或 per_tensor
-          dtype: "int8"           # 数据类型: int8
-          symmetric: true         # 是否对称量化
-          method: "minmax"        # 量化方法: minmax
+          scope: "per_tensor"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
         weight:
-          scope: "per_channel"    # 权重量化范围: per_channel 或 per_group
-          dtype: "int8"           # 数据类型: int8
-          symmetric: true         # 是否对称量化
-          method: "minmax"        # 量化方法: minmax, ssz
+          scope: "per_channel"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
 
-      default_w4a8_dynamic_perchannel:
+      w8a8_dynamic:
+        act:
+          scope: "per_token"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+        weight:
+          scope: "per_channel"
+          dtype: "int8"
+          symmetric: true
+          method: "minmax"
+
+      w4a8_dynamic:
         act:
           scope: "per_token"
           dtype: "int8"
@@ -181,20 +193,6 @@ quantization_template_config:
           dtype: "int4"
           symmetric: true
           method: "ssz"
-
-# default_w4a8_dynamic_pergroup:
-      #   act:
-      #     scope: "per_token"
-      #     dtype: "int8"
-      #     symmetric: true
-      #     method: "minmax"
-      #   weight:
-      #     scope: "per_group"
-      #     dtype: "int4"
-      #     symmetric: true
-      #     method: "ssz"
-      #     ext:
-      #       group_size: 64
 
     process:
       # TODO： 选择性开启 quarot
@@ -208,11 +206,11 @@ quantization_template_config:
       - type: "group"
         configs:
           - type: "linear_quant"
-            qconfig_ref: "default_w4a8_dynamic_perchannel"
+            qconfig_ref: "w4a8_dynamic"
           - type: "linear_quant"
-            qconfig_ref: "default_w8a8_dynamic"
-          # - type: "linear_quant"
-          #   qconfig_ref: "default_w4a8_dynamic_pergroup"
+            qconfig_ref: "w8a8_dynamic"
+          - type: "linear_quant"
+            qconfig_ref: "w8a8_default"
 
     save:
       - type: "ascendv1_saver"

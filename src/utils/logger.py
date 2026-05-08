@@ -35,7 +35,7 @@ def setup_logger(
     # 2. 定义日志格式
     # 示例: 2025-11-14 10:50:00,123 - INFO - quantizer.py - Message
     formatter = logging.Formatter(
-        "%(asctime)s - %(levelname)s - %(filename)s - %(message)s",
+        "%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
