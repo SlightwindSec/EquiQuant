@@ -72,7 +72,7 @@ def catch_model_cache(
             raise ValueError
 
     model.model.embed_tokens.npu()
-    model.model.layers[0].npu()
+    model.model.rotary_emb.npu()
     model.model.layers[0] = Catcher(model.model.layers[0])
 
     try:
@@ -81,7 +81,7 @@ def catch_model_cache(
         pass
 
     model.model.layers[0] = model.model.layers[0].module
-    model.model.layers[0].cpu()
+    model.model.rotary_emb.cpu()
     model.model.embed_tokens.cpu()
 
     model_cache = {}
