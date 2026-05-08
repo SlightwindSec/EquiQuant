@@ -1,4 +1,4 @@
-base_model_path: "/home/kongjunyu/Qwen3.5-27B"
+base_model_path: "/home/zc_test/Qwen3.5-27B"
 is_mm: true
 is_deepseek_v32: false
 
