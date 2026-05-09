@@ -131,9 +131,9 @@ quantization_tool: "llmcompressor"
 enable_smooth_quant: false
 smooth_strength: 0.8
 quantization_visible_devices: "1"
-quantization_device: "npu"
+quantization_device: "ccpu"
 quantization_model_type: "Qwen3-30B"
-quantization_calib_data_path: ""
+quantization_calib_data_path: "/home/kongjunyu/calib_data.txt"
 num_calibration_samples: 4
 max_sequence_length: 2048
 # quantization_modifier: "PTQ"
