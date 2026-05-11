@@ -10,16 +10,16 @@ class GlobalConfig:
     _instance = None
     _initialized = False
 
-    _DEFAULT_CONFIG_FILE_PATH = "config/config.yaml"
+    SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim"}
     _DEFAULT_MODEL_CONFIG = {"is_mm": False, "is_deepseek_v32": False}
     _DEFAULT_VISIBLE_DEVICE = "0"
 
-    def __new__(cls, config_file_path=_DEFAULT_CONFIG_FILE_PATH):
+    def __new__(cls, *args, **kwargs):
         if cls._instance is None:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self, config_file_path=_DEFAULT_CONFIG_FILE_PATH):
+    def __init__(self, config_file_path: str, quantization_tool: str):
         if self._initialized:
             return
         self._initialized = True
@@ -27,9 +27,13 @@ class GlobalConfig:
         with open(config_file_path, "r", encoding="utf-8") as f:
             self._user_config = yaml.safe_load(f) or {}
         self.raw_config = {}
-        self._normalize_config()
+        self._normalize_config(quantization_tool)
 
-    def _normalize_config(self):
+    @classmethod
+    def get_instance(cls) -> "GlobalConfig":
+        return self._instance
+
+    def _normalize_config(self, quantization_tool: str):
         """
         Normalize the configuration. Result is stored in self.raw_config.
         """
@@ -41,7 +45,7 @@ class GlobalConfig:
         self._normalize_workspace_config()
         self._normalize_strategy_config()
         self._normalize_aqt_config()
-        self._normalize_quantization_config()
+        self._normalize_quantization_config(quantization_tool)
         self._normalize_vllm_config()
         self._normalize_evaluation_config()
     
@@ -97,17 +101,15 @@ class GlobalConfig:
             "max_budget_mb": self._user_config.get("aqt_max_budget_mb", 12000),
         }
 
-    def _normalize_quantization_config(self) -> None:
+    def _normalize_quantization_config(self, quantization_tool: str) -> None:
         """
         Normalize the quantization configuration.
         """
-        SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim"}
 
         # checks if quantization_tool is supported, then store it if supported
-        quantization_tool = self._user_config.get("quantization_tool", "msmodelslim")
-        if quantization_tool not in SUPPORTED_QUANTIZATION_TOOLS:
+        if quantization_tool not in self.SUPPORTED_QUANTIZATION_TOOLS:
             raise ValueError(
-                f"`quantization_tool` should be one of {SUPPORTED_QUANTIZATION_TOOLS}, but got '{quantization_tool}'"
+                f"`quantization_tool` should be one of {self.SUPPORTED_QUANTIZATION_TOOLS}, but got '{quantization_tool}'"
             )
         self.raw_config["quantization_tool"] = quantization_tool
 
@@ -128,9 +130,9 @@ class GlobalConfig:
 
         # normalize quant config based on quantization tool chosen
         if quantization_tool == "msmodelslim":
-            self._normalize_msmodelslim_config(visible_devices)
+            self._normalize_msmodelslim_config()
         elif quantization_tool == "llmcompressor":
-            self._normalize_llmcompressor_config(visible_devices, calib_data_path)
+            self._normalize_llmcompressor_config(calib_data_path)
         
         self.raw_config["quantization"].update({
             "visible_devices": visible_devices,

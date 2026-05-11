@@ -66,4 +66,4 @@ def setup_logger(
     return logger
 
 
-logger = setup_logger(log_file=os.path.join(GlobalConfig().raw_config["workspace"]["basedir"], "equiquant_run.log"))
+logger = setup_logger(log_file=os.path.join(GlobalConfig.get_instance().raw_config["workspace"]["basedir"], "equiquant_run.log"))
