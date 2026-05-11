@@ -10,7 +10,7 @@ class GlobalConfig:
     _instance = None
     _initialized = False
 
-    SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim"}
+    SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim", "modeloptimizer"}
     _DEFAULT_MODEL_CONFIG = {"is_mm": False, "is_deepseek_v32": False}
     _DEFAULT_VISIBLE_DEVICE = "0"
 
@@ -31,7 +31,7 @@ class GlobalConfig:
 
     @classmethod
     def get_instance(cls) -> "GlobalConfig":
-        return self._instance
+        return cls._instance
 
     def _normalize_config(self, quantization_tool: str):
         """
@@ -123,8 +123,8 @@ class GlobalConfig:
             self._user_config.get("aqt_quant_data_path")
             )
 
-        # llmcompressor only supports single-cardPU quantization
-        if quantization_tool == "llmcompressor" and "," in str(visible_devices).strip():
+        # llmcompressor and modeloptimizer only supports single-cardPU quantization
+        if quantization_tool != "msmodelslim" and "," in str(visible_devices).strip():
             visible_devices = visible_devices.split(",")[0]
             print(f"llmcompressor only supports single-cardPU quantization, using '{visible_devices}' instead.")
 
@@ -133,6 +133,8 @@ class GlobalConfig:
             self._normalize_msmodelslim_config()
         elif quantization_tool == "llmcompressor":
             self._normalize_llmcompressor_config(calib_data_path)
+        elif quantization_tool == "modeloptimizer":
+            self._normalize_modeloptimizer_config(calib_data_path)
         
         self.raw_config["quantization"].update({
             "visible_devices": visible_devices,
@@ -167,14 +169,26 @@ class GlobalConfig:
         Normalize the llmcompressor configuration.
         """
         self.raw_config["quantization"] = {
+            "calib_data_path": calib_data_path,
             "enable_smooth_quant": self._user_config.get("enable_smooth_quant", False),
             "smooth_strength": self._user_config.get("smooth_strength", 0.8),
-            "calib_data_path": calib_data_path,
             "num_calibration_samples": self._user_config.get("num_calibration_samples", 512),
             "max_sequence_length": self._user_config.get("max_sequence_length", 2048),
             "modifier": self._user_config.get("quantization_modifier", "PTQ"),
         }
     
+    def _normalize_modeloptimizer_config(self, calib_data_path: str) -> None:
+        """
+        Normalize the modeloptimizer configuration.
+        """
+        self.raw_config["quantization"] = {
+            "calib_data_path": calib_data_path,
+            "calib_samples": self._user_config.get("calib_samples", 512),
+            "batch_size": self._user_config.get("batch_size", 16),
+            "effective_bits": self._user_config.get("effective_bits", 8.0),
+            "search_space": self._user_config.get("search_space", "fp8,int4_awq"),
+        }
+
     def _normalize_vllm_config(self) -> None:
         """
         Normalize the vllm configuration.

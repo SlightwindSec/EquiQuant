@@ -65,5 +65,5 @@ def setup_logger(
 
     return logger
 
-
-logger = setup_logger(log_file=os.path.join(GlobalConfig.get_instance().raw_config["workspace"]["basedir"], "equiquant_run.log"))
+DEFAULT_LOG_FILE = "workspace/equiquant_run.log"
+logger = setup_logger(log_file=DEFAULT_LOG_FILE)

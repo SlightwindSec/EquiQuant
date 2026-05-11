@@ -5,7 +5,7 @@ from importlib.metadata import PackageNotFoundError
 from typing import Tuple, List, Literal
 
 
-def check_requirements(quantizer: Literal["msmodelslim", "llmcompressor"]) -> bool:
+def check_requirements(quantizer: Literal["msmodelslim", "llmcompressor", "modeloptimizer"]) -> bool:
     """Check all environment dependencies.
 
     Args:
@@ -40,7 +40,7 @@ def check_requirements(quantizer: Literal["msmodelslim", "llmcompressor"]) -> bo
 
     return check_pass
 
-def _items_to_check(quantizer: Literal["msmodelslim", "llmcompressor"]) -> List[Tuple[str, str, str]]:
+def _items_to_check(quantizer: Literal["msmodelslim", "llmcompressor", "modeloptimizer"]) -> List[Tuple[str, str, str]]:
     """Get the items to check for the specified quantizer.
 
     Args:
@@ -63,6 +63,11 @@ def _items_to_check(quantizer: Literal["msmodelslim", "llmcompressor"]) -> List[
         additional_items = [
             ("pip", "llmcompressor", "LLMCompressor Tool"),
         ]
+    elif quantizer == "modeloptimizer":
+        additional_items = [
+            ("pip", "nvidia-modelopt", "ModelOptimizer Tool"),
+        ]
+    
     return base_packages + additional_items
 
 def _check_pip_version(package_name: str) -> Tuple[str, bool]:

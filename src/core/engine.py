@@ -23,7 +23,7 @@ QUANT_CONFIG_NAME = {
 
 
 class EquiQuantEngine:
-    def __init__(self, config):
+    def __init__(self, config: dict):
         self.config = config
         self.workspace = config["workspace"]
         self.evaluation_config = config["evaluation"]

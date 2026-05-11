@@ -35,18 +35,24 @@ aqt_max_budget_mb: 2000  # optional, default to 12000MB
 # -----------------------------------------------
 # 量化器配置
 # -----------------------------------------------
-quantization_tool: "msmodelslim"  # optional, one of ["msmodelslim", "llmcompressor"], default to "msmodelslim"
 quantization_visible_devices: "1"  # optional, default to aqt's visible devices
 quantization_model_type: "Qwen3-32B"  # optional, default to "Qwen3-32B"
 quantization_device: "npu"  # optional, default to "npu"
 
+# ModelOptimizer YAML 配置模板
+calib_data_path: "" # optional, default to aqt's calibration data path
+calib_samples: 512  # optional, default to 512
+batch_size: 16  # optional, default to 16
+effective_bits: 8.0  # optional, default to 8.0
+search_space: fp8,int4_awq  # optional, default to "fp8,int4_awq"
+
 # LLMCompressor YAML 配置模板
-# enable_smooth_quant: false  # optional, default to false
-# smooth_strength: 0.8  # optional, default to 0.8
-# quantization_calib_data_path: ""  # optional, default to aqt's calibration data path
-# num_calibration_samples: 512  # optional, default to 512
-# max_sequence_length: 2048  # optional, default to 2048
-# quantization_modifier: "PTQ"  # optional, default to "PTQ"
+enable_smooth_quant: false  # optional, default to false
+smooth_strength: 0.8  # optional, default to 0.8
+quantization_calib_data_path: ""  # optional, default to aqt's calibration data path
+num_calibration_samples: 512  # optional, default to 512
+max_sequence_length: 2048  # optional, default to 2048
+quantization_modifier: "PTQ"  # optional, default to "PTQ"
 
 # Modelslim YAML 配置模板
 quantization_trust_remote_code: true  # optional, default to true
