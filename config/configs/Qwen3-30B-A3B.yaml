@@ -41,7 +41,7 @@ quantization_tool: "llmcompressor"
 enable_smooth_quant: false
 smooth_strength: 0.8
 quantization_visible_devices: "1"
-quantization_device: "ccpu"
+quantization_device: "cpu"
 quantization_model_type: "Qwen3-30B"
 quantization_calib_data_path: "/home/kongjunyu/calib_data.txt"
 num_calibration_samples: 4

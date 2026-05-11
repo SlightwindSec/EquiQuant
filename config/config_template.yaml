@@ -155,7 +155,6 @@ aisbench_generation_kwargs:  # optional, default to the dict below
   seed: null
   repetition_penalty: 1.03
 
-
 aisbench_use_chat_template: true  # optional, default to true
 aisbench_timeout: 7200  # optional, default to 7200
 aisbench_request_rate: 0  # optional, default to 1
@@ -177,8 +176,8 @@ aisbench_host_port  # optional, default to null
 # -----------------------------------------------
 # VLLM-Ascend Server
 # -----------------------------------------------
-vllm_port: 1234
-vllm_env_vars:
+vllm_port: 1234  # optional, default to 1234
+vllm_env_vars:  # optional, default to {}
   HCCL_OP_RETRY_ENABLE: "L0:0, L1:0, L2:0"
   HCCL_BUFFSIZE: 1024
   # TODO: 根据实际情况修改用的卡号
@@ -194,7 +193,7 @@ vllm_env_vars:
   TORCHDYNAMO_ALLOW_INTERNAL_API: 1
   VLLM_INDUCTOR_NO_FALLBACK: 0
   MIES_USE_MB_SWAPPER: 1
-vllm_args:
+vllm_args:  # optional
   trust-remote-code: true
   tensor-parallel-size: 2
   data-parallel-size: 1

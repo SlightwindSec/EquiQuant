@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+from .global_args import GlobalConfig
 
 
 def setup_logger(
@@ -65,5 +66,4 @@ def setup_logger(
     return logger
 
 
-DEFAULT_LOG_FILE = "workspace/equiquant_run.log"
-logger = setup_logger(log_file=DEFAULT_LOG_FILE)
+logger = setup_logger(log_file=os.path.join(GlobalConfig().raw_config["workspace"]["basedir"], "equiquant_run.log"))

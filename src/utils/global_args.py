@@ -1,24 +1,6 @@
 import copy
 import os
 import yaml
-from .logger import logger
-
-
-DEFAULT_VLLM_ARGS = {
-    "trust-remote-code": True,
-    "tensor-parallel-size": 2,
-    "data-parallel-size": 1,
-    "enable-prefix-caching": False,
-    "max-model-len": 8192,
-    "max-num-batched-tokens": 8192,
-    "gpu-memory-utilization": 0.9,
-    "additional-config": {
-        "ascend_scheduler_config": {"enabled": False},
-        "enable_cpu_binding": True,
-        "enable_weight_nz_layout": True,
-    },
-}
-
 
 
 class GlobalConfig:
@@ -48,6 +30,9 @@ class GlobalConfig:
         self._normalize_config()
 
     def _normalize_config(self):
+        """
+        Normalize the configuration. Result is stored in self.raw_config.
+        """
         base_model_path = self._user_config.get("base_model_path")
         if not base_model_path:
             raise ValueError("`base_model_path` must be provided in config_file_path")
@@ -57,27 +42,8 @@ class GlobalConfig:
         self._normalize_strategy_config()
         self._normalize_aqt_config()
         self._normalize_quantization_config()
-
-
-
-        vllm_args = copy.deepcopy(DEFAULT_VLLM_ARGS)
-        if isinstance(cfg.get("vllm_args"), dict):
-            vllm_args.update(cfg["vllm_args"])
-        if quantization_tool == "msmodelslim":
-            vllm_args["quantization"] = "ascend"
-        if "served-model-name" not in vllm_args:
-            served_model_name = cfg.get("vllm_served_model_name", "model")
-            vllm_args["served-model-name"] = served_model_name
-
-        normalized["vllm_server"] = {
-            "entrypoint": "vllm.entrypoints.openai.api_server",
-            "env_vars": cfg.get("vllm_env_vars", {}),
-            "host": "localhost",
-            "port": cfg.get("vllm_port", 1234),
-            "health_check_endpoint": "/v1/models",
-            "startup_timeout": 1800,
-            "args": vllm_args,
-        }
+        self._normalize_vllm_config()
+        self._normalize_evaluation_config()
     
     def _normalize_workspace_config(self) -> None:
         """
@@ -112,14 +78,14 @@ class GlobalConfig:
         )
         self.raw_config["aqt"] = {
             "quant_data_path": self._user_config.get("aqt_quant_data_path"),
-            "is_mm": self._user_config.get("is_mm", _DEFAULT_MODEL_CONFIG["is_mm"]),
+            "is_mm": self._user_config.get("is_mm", self._DEFAULT_MODEL_CONFIG["is_mm"]),
             "is_deepseek_v32": self._user_config.get(
-                "is_deepseek_v32", _DEFAULT_MODEL_CONFIG["is_deepseek_v32"]
+                "is_deepseek_v32", self._DEFAULT_MODEL_CONFIG["is_deepseek_v32"]
                 ),
             "results_dir": self._user_config.get("aqt_results_dir", default_aqt_results),
             "omp_num_threads": self._user_config.get("aqt_omp_num_threads", 32),
             "ascend_visible_devices": self._user_config.get(
-                "aqt_ascend_visible_devices", _DEFAULT_VISIBLE_DEVICE
+                "aqt_ascend_visible_devices", self._DEFAULT_VISIBLE_DEVICE
                 ),
             "quant_samples_num": self._user_config.get("aqt_quant_samples_num", 128),
             "quant_context_length": self._user_config.get("aqt_quant_context_length", 4096),
@@ -148,17 +114,17 @@ class GlobalConfig:
         # if quantization_tool specific device/data is not provided, use aqt's instead
         visible_devices = self._user_config.get(
             "quantization_visible_devices",
-            _DEFAULT_VISIBLE_DEVICE
+            self._DEFAULT_VISIBLE_DEVICE
             )
         calib_data_path = self._user_config.get(
             "quantization_calib_data_path",
-            cfg.get("aqt_quant_data_path")
+            self._user_config.get("aqt_quant_data_path")
             )
 
         # llmcompressor only supports single-cardPU quantization
         if quantization_tool == "llmcompressor" and "," in str(visible_devices).strip():
             visible_devices = visible_devices.split(",")[0]
-            logger.info(f"llmcompressor only supports single-cardPU quantization, using '{visible_devices}' instead.")
+            print(f"llmcompressor only supports single-cardPU quantization, using '{visible_devices}' instead.")
 
         # normalize quant config based on quantization tool chosen
         if quantization_tool == "msmodelslim":
@@ -184,9 +150,9 @@ class GlobalConfig:
             )
 
         self.raw_config["quantization"] = {
-            "is_mm": self._user_config.get("is_mm", _DEFAULT_MODEL_CONFIG["is_mm"]),
+            "is_mm": self._user_config.get("is_mm", self._DEFAULT_MODEL_CONFIG["is_mm"]),
             "is_deepseek_v32": self._user_config.get(
-                "is_deepseek_v32", _DEFAULT_MODEL_CONFIG["is_deepseek_v32"]
+                "is_deepseek_v32", self._DEFAULT_MODEL_CONFIG["is_deepseek_v32"]
                 ),
             "trust_remote_code": self._user_config.get("quantization_trust_remote_code", True),
             "template_config": copy.deepcopy(quant_template),
@@ -207,6 +173,43 @@ class GlobalConfig:
             "modifier": self._user_config.get("quantization_modifier", "PTQ"),
         }
     
+    def _normalize_vllm_config(self) -> None:
+        """
+        Normalize the vllm configuration.
+        """
+        DEFAULT_VLLM_ARGS = {
+            "trust-remote-code": True,
+            "tensor-parallel-size": 2,
+            "data-parallel-size": 1,
+            "enable-prefix-caching": False,
+            "max-model-len": 8192,
+            "max-num-batched-tokens": 8192,
+            "gpu-memory-utilization": 0.9,
+            "additional-config": {
+                "ascend_scheduler_config": {"enabled": False},
+                "enable_cpu_binding": True,
+                "enable_weight_nz_layout": True,
+            },
+        }
+        vllm_args = copy.deepcopy(DEFAULT_VLLM_ARGS)
+        if isinstance(self._user_config.get("vllm_args"), dict):
+            vllm_args.update(self._user_config["vllm_args"])
+        if self._user_config.get("quantization_tool") == "msmodelslim":
+            vllm_args["quantization"] = "ascend"
+        if "served-model-name" not in vllm_args:
+            served_model_name = self._user_config.get("vllm_served_model_name", "model")
+            vllm_args["served-model-name"] = served_model_name
+
+        self.raw_config["vllm_server"] = {
+            "entrypoint": "vllm.entrypoints.openai.api_server",
+            "env_vars": self._user_config.get("vllm_env_vars", {}),
+            "host": "localhost",
+            "port": self._user_config.get("vllm_port", 1234),
+            "health_check_endpoint": "/v1/models",
+            "startup_timeout": 1800,
+            "args": vllm_args,
+        }
+
     def _normalize_evaluation_config(self) -> None:
         """
         Normalize the evaluation configuration.
@@ -225,7 +228,7 @@ class GlobalConfig:
             "disable_qwen_thinking": self._user_config.get("disable_qwen_thinking", False),
         }
 
-        ais_generation = DEFAULT_GENERATION_KWARGS
+        ais_generation = copy.deepcopy(DEFAULT_GENERATION_KWARGS)
         if isinstance(self._user_config.get("aisbench_generation_kwargs"), dict):
             ais_generation.update(self._user_config["aisbench_generation_kwargs"])
 
@@ -274,7 +277,7 @@ class GlobalConfig:
             "extra_args": self._user_config.get("aisbench_extra_args"),
             "cleanup_model_config": self._user_config.get("aisbench_cleanup_model_config", True),
             "host_ip": self._user_config.get("aisbench_host_ip"),
-            "host_port": self._user_configg.get("aisbench_host_port"),
+            "host_port": self._user_config.get("aisbench_host_port"),
         }
 
         self.raw_config["evaluation"] = evaluation
