@@ -8,5 +8,11 @@ if __name__ == "__main__":
         exit()
     set_global_args()
     config = get_config()
+    if config.raw_config["quantization_tool"] == "modeloptimizer":
+        from src.modules.modeloptimizer import ModelOptimizerQuantizer
+        quantizer = ModelOptimizerQuantizer(config)
+        quantizer.run()
+        exit()
+    
     engine = EquiQuantEngine(config.raw_config)
     engine.run()
