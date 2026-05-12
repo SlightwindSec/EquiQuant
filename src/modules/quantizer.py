@@ -470,9 +470,6 @@ class LLMCompressorQuantizer(BaseQuantizer):
             self.config.get("modifier", "PTQ"), "QuantizationModifier"
         )
 
-        need_calib_data = modifier != "QuantizationModifier" or self.config.get(
-            "enable_smoothquant", False
-        )
 
         script_lines = []
 
@@ -481,7 +478,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 "import os",
                 "",
                 "import torch",
-                "from datasets import load_dataset",
+                "from datasets import Dataset",
                 "from transformers import AutoModelForCausalLM, AutoTokenizer",
                 "",
                 "from llmcompressor import oneshot",
@@ -500,7 +497,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 f"SAVE_DIR = {repr(self.output_weights_path)}",
                 "model = AutoModelForCausalLM.from_pretrained(",
                 "    MODEL_ID,",
-                "    device_map='auto',",
+                f"    device_map='{self.config.get('device', 'cpu')}',",
                 "    torch_dtype=torch.bfloat16,",
                 "    trust_remote_code=True,",
                 ")",
@@ -509,45 +506,24 @@ class LLMCompressorQuantizer(BaseQuantizer):
             ]
         )
 
-        if need_calib_data:
-            script_lines.extend(
-                [
-                    f"DATASET_ID = {repr(self.config.get('calib_dataset_path', 'HuggingFaceH4/ultrachat_200k'))}",
-                    f"DATASET_SPLIT = {repr(self.config.get('calib_dataset_split', 'train_sft'))}",
-                    f"NUM_CALIBRATION_SAMPLES = {self.config.get('num_calibration_samples', 512)}",
-                    f"MAX_SEQUENCE_LENGTH = {self.config.get('max_sequence_length', 2048)}",
-                    "",
-                    "ds = load_dataset(DATASET_ID, split=f'{{DATASET_SPLIT}}[:{{NUM_CALIBRATION_SAMPLES}}]')",
-                    "ds = ds.shuffle(seed=42)",
-                    "",
-                    "",
-                    "def preprocess(example):",
-                    "    return {",
-                    "        'text': tokenizer.apply_chat_template(",
-                    "            example['messages'],",
-                    "            tokenize=False,",
-                    "            add_generation_prompt=False,",
-                    "        )",
-                    "    }",
-                    "",
-                    "",
-                    "ds = ds.map(preprocess)",
-                    "",
-                    "",
-                    "def tokenize(sample):",
-                    "    return tokenizer(",
-                    "        sample['text'],",
-                    "        padding=False,",
-                    "        max_length=MAX_SEQUENCE_LENGTH,",
-                    "        truncation=True,",
-                    "        add_special_tokens=False,",
-                    "    )",
-                    "",
-                    "",
-                    "ds = ds.map(tokenize, remove_columns=ds.column_names)",
-                    "",
-                ]
-            )
+        script_lines.extend(
+            [
+                f"DATASET_ID = {repr(self.config.get('calib_data_path'))}",
+                f"NUM_CALIBRATION_SAMPLES = {self.config.get('num_calibration_samples', 512)}",
+                f"MAX_SEQUENCE_LENGTH = {self.config.get('max_sequence_length', 2048)}",
+                "texts = []",
+                "encodings = ['utf-8', 'gbk', 'gb18030', 'utf-8-sig']",
+                "for encoding in encodings:",
+                "   try:",
+                "       with open(DATASET_ID, 'r', encoding=encoding) as f:",
+                "           lines = [line.strip() for line in f if line.strip()]",
+                "   except UnicodeDecodeError:",
+                "       continue",
+                "",
+                "ds = Dataset.from_dict({'text': lines})",
+                "",
+            ]
+        )
 
         def _fmt_yaml_list(lst, num: int):
             if not lst:
@@ -621,36 +597,22 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 ]
             )
 
-        if need_calib_data:
-            script_lines.extend(
-                [
-                    "oneshot(",
-                    "    model=model,",
-                    "    dataset=ds,",
-                    "    recipe=recipe,",
-                    "    tokenizer=tokenizer,",
-                    "    max_seq_length=MAX_SEQUENCE_LENGTH,",
-                    "    num_calibration_samples=NUM_CALIBRATION_SAMPLES,",
-                    "    output_dir=SAVE_DIR,",
-                    "    save_compressed=True,",
-                    ")",
-                    "",
-                    "",
-                ]
-            )
-        else:
-            script_lines.extend(
-                [
-                    "oneshot(",
-                    "    model=model,",
-                    "    recipe=recipe,",
-                    "    tokenizer=tokenizer,",
-                    "    output_dir=SAVE_DIR,",
-                    "    save_compressed=True,",
-                    ")",
-                    "",
-                ]
-            )
+        script_lines.extend(
+            [
+                "oneshot(",
+                "    model=model,",
+                "    dataset=ds,",
+                "    recipe=recipe,",
+                "    tokenizer=tokenizer,",
+                "    max_seq_length=MAX_SEQUENCE_LENGTH,",
+                "    num_calibration_samples=NUM_CALIBRATION_SAMPLES,",
+                "    output_dir=SAVE_DIR,",
+                "    save_compressed=True,",
+                ")",
+                "",
+                "",
+            ]
+        )
 
         final_script = "\n".join(script_lines)
 
