@@ -2,8 +2,6 @@ import copy
 import os
 import yaml
 
-_GLOBAL_CONFIG = None
-
 DEFAULT_GENERATION_KWARGS = {
     "temperature": 0.5,
     "top_k": 10,
@@ -31,8 +29,20 @@ SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim"}
 
 
 class GlobalConfig:
-    def __init__(self):
-        with open("config/config.yaml", "r", encoding="utf-8") as f:
+    _instance = None
+    _initialized = False
+
+    def __new__(cls, *args, **kwargs):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self, config_file_path="config/config.yaml"):
+        if self._initialized:
+            return
+        self._initialized = True
+
+        with open(config_file_path, "r", encoding="utf-8") as f:
             self.user_config = yaml.safe_load(f) or {}
         self.raw_config = self._normalize_config(self.user_config)
 
@@ -41,7 +51,7 @@ class GlobalConfig:
 
         base_model_path = cfg.get("base_model_path")
         if not base_model_path:
-            raise ValueError("`base_model_path` must be provided in config/config.yaml")
+            raise ValueError("`base_model_path` must be provided in config_file_path")
         normalized["base_model_path"] = base_model_path
 
         normalized["workspace"] = {
@@ -74,11 +84,11 @@ class GlobalConfig:
             )
 
         calib_data_path = cfg.get("quantization_calib_data_path", "")
-        # if quantization_tool == "llmcompressor" and calib_data_path == "":
-        #     raise ValueError(
-        #         f"Calibration data must be provided for llmcompressor! "
-        #         f"Please set `quantization_calib_data_path` in config/config.yaml"
-        #     )
+        if quantization_tool == "llmcompressor" and calib_data_path == "":
+            raise ValueError(
+                f"Calibration data must be provided for llmcompressor! "
+                f"Please set `quantization_calib_data_path` in configuration yaml"
+            )
         if quantization_tool == "msmodelslim":
             # 优先从quantization_template_config中读取w_bit/a_bit，如果没有则从旧字段读取
             quant_template = cfg.get("quantization_template_config") or {}
@@ -191,12 +201,6 @@ class GlobalConfig:
         }
 
         # Automatic Quantization Tool (AQT)
-        aqt_enabled = cfg.get("enabled", True)
-        if not aqt_enabled:
-            raise ValueError(
-                "AQT is disabled, please set `aqt_enabled` to true in config/config.yaml"
-            )
-
         default_aqt_results = os.path.join(
             normalized["workspace"]["base_dir"], "aqt_results"
         )
@@ -218,17 +222,3 @@ class GlobalConfig:
         }
 
         return normalized
-
-
-def get_config():
-    global _GLOBAL_CONFIG
-    return _GLOBAL_CONFIG
-
-
-def set_config():
-    global _GLOBAL_CONFIG
-    _GLOBAL_CONFIG = GlobalConfig()
-
-
-def set_global_args():
-    set_config()

@@ -500,7 +500,7 @@ class LLMCompressorQuantizer(BaseQuantizer):
                 f"SAVE_DIR = {repr(self.output_weights_path)}",
                 "model = AutoModelForCausalLM.from_pretrained(",
                 "    MODEL_ID,",
-                "    device_map='auto',",
+                f"    device_map='{self.config.get('device', 'cpu')}',",
                 "    torch_dtype=torch.bfloat16,",
                 "    trust_remote_code=True,",
                 ")",

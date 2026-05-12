@@ -5,7 +5,7 @@ is_deepseek_v32: false
 # -----------------------------------------------
 # 工作区 (运行时文件)
 # -----------------------------------------------
-workspace_base_dir: "workspace-Qwen3.5-27B"
+workspace_base_dir: "workspace"
 workspace_current_run_dir: "current_run"
 workspace_best_weights_dir: "best_weights"
 workspace_quant_weights_dir: "quantized_weights"
@@ -54,7 +54,7 @@ aisbench_generation_kwargs:
   top_p: 0.95
   seed: null
   repetition_penalty: 1.03
-aisbench_log_dir: "workspace-Qwen3.5-27B/aisbench_logs"
+aisbench_log_dir: "workspace/aisbench_logs"
 aisbench_default_metric_keys:
   - "final_accuracy"
   - "accuracy"
@@ -105,14 +105,13 @@ vllm_args:
 # -----------------------------------------------
 # Automatic Quantization Tool (AQT)
 # -----------------------------------------------
-aqt_enabled: true
-aqt_results_dir: "workspace-Qwen3.5-27B/aqt_results"
+aqt_results_dir: "workspace/aqt_results"
 aqt_omp_num_threads: 32
 # TODO: 根据实际情况修改用的卡号
 aqt_ascend_visible_devices: "0"
 # 校准集
 aqt_quant_data_path: "/home/kongjunyu/calib_data.txt"     # 必填：校准集路径
-aqt_quant_samples_num: 32
+aqt_quant_samples_num: 4
 aqt_quant_context_length: 2048
 # 敏感度指标
 aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]
@@ -170,6 +169,15 @@ quantization_template_config:
           method: "minmax"        # 量化方法: minmax, ssz
 
     process:
+      # TODO： 选择性开启 quarot
+      # - type: "quarot"
+      - type: "flex_smooth_quant"
+        enable_subgraph_type:
+          - 'norm-linear'
+          - 'ov'
+          - 'up-down'
+        include:
+          - "*"
       - type: "group"
         configs:
           - type: "linear_quant"
