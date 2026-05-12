@@ -11,15 +11,32 @@ workspace_best_weights_dir: "best_weights"
 workspace_quant_weights_dir: "quantized_weights"
 
 # -----------------------------------------------
-# 核心调优策略（仅无 AQT 时使用固定回退层）
+# 核心调优策略 (Tuning Strategy)
 # -----------------------------------------------
 strategy_initial_fallback_layers:
   - 'lm_head'
 
+tuning_strategy:
+  initial_layer_configs:
+    # 示例:
+    # - regex: ".*mlp\\.experts.*"
+    #   config: "w8a8_dynamic"
+    # - regex: ".*"
+    #   config: "w4a8_dynamic"
+    []
+
+  upgrade_schemes:
+    # 示例:
+    # - regex: ".*mlp\\.experts.*"
+    #   path: ["w8a8_dynamic", "float"]
+    # - regex: ".*"
+    #   path: ["w4a8_dynamic", "w8a8_default", "w8a8_dynamic", "float"]
+    []
+
 # -----------------------------------------------
 # 评估配置
 # -----------------------------------------------
-evaluation_tolerance_ratio: 1.0
+evaluation_tolerance_ratio: 0.01
 disable_qwen_thinking: false
 
 evaluation_datasets:
@@ -27,20 +44,21 @@ evaluation_datasets:
     config_name: "aime2024_gen_0_shot_chat_prompt"
     mode: "all"
     target_accuracy: 90.0
-    tolerance_ratio: 6.67
+    tolerance_ratio: 0.01
     metric_keys:
       - "aime2024_accuracy"
   aime2025:
     config_name: "aime2025_gen"
     mode: "all"
     target_accuracy: 70.0
-    tolerance_ratio: 3.34
+    tolerance_ratio: 0.01
     metric_keys:
       - "aime2025_accuracy"
   gpqa:
     config_name: "gpqa_gen_0_shot_cot_chat_prompt"
     mode: "all"
     target_accuracy: 61.62
+    tolerance_ratio: 0.01
 
 
 aisbench_timeout: 7200
@@ -115,14 +133,8 @@ aqt_ascend_visible_devices: "0"
 aqt_quant_data_path: "/home/f50049642/calib_data.txt"     # 必填：校准集路径
 aqt_quant_samples_num: 32
 aqt_quant_context_length: 2048
-# 敏感度指标
-aqt_sensitivity_metrics: ["mse", "cosine", "relative_l2", "kl_div"]
-# 回退预算
-aqt_initial_budget_mb: 0
-aqt_budget_step_mb: 200
-aqt_budget_step_down_mb: 100
-aqt_min_budget_mb: 0
-aqt_max_budget_mb: 2000
+# 敏感度指标 (必填：mse, cosine, relative_l2, kl_div 之一)
+aqt_sensitivity_metric: "mse"
 
 # -----------------------------------------------
 # 量化器配置

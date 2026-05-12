@@ -7,12 +7,11 @@ from .utils.quant_config_manager import (
     QuantLayerConfigManager,
     compress_hybrid_quant_schema,
 )
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model-name-or-path", required=True, type=str)
     parser.add_argument("--layer-configs-path", type=str, default=None)
+    parser.add_argument("--initial-configs-rules-path", type=str, default=None)
     parser.add_argument("--hybrid-quant-schema-path", required=True, type=str)
     parser.add_argument("--hybrid-quant-schema-re-path", required=True, type=str)
     parser.add_argument("--sensitivity-scores-save-path", required=True, type=str)
@@ -31,17 +30,27 @@ def main() -> None:
     num_experts = config.get("num_experts", config.get("n_routed_experts", 0))
     num_layers = config.get("num_hidden_layers")
 
+    # 1. Load last layer configs if provided
     layer_configs = None
     if args.layer_configs_path and os.path.exists(args.layer_configs_path):
         logger.info(f"Loading stateful layer configurations from {args.layer_configs_path}")
-        with open(args.layer_configs_path, "r", encoding="utf-8") as f:
+        with open(args.layer_configs_path, 'r') as f:
             layer_configs = json.load(f)
 
+    # 2. Load initial config rules if provided
+    initial_configs_rules = None
+    if args.initial_configs_rules_path and os.path.exists(args.initial_configs_rules_path):
+        logger.info(f"Loading initial configuration rules from {args.initial_configs_rules_path}")
+        with open(args.initial_configs_rules_path, 'r') as f:
+            initial_configs_rules = json.load(f)
+
+    # 3. Initialize Manager (Initialization logic is now inside __init__)
     quant_layer_cfg_mgr = QuantLayerConfigManager(
         num_experts=num_experts, 
         num_layers=num_layers,
         sensitivity_scores=sensitivity_scores,
-        layer_configs=layer_configs
+        layer_configs=layer_configs,
+        initial_configs_rules=initial_configs_rules
     )
 
     layers_quant_mapping = quant_layer_cfg_mgr.create_quant_layers_mapping()

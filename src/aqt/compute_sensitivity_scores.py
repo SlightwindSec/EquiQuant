@@ -51,8 +51,8 @@ def _compute_sensitivity_scores(
     prefix = "model.language_model.layers" if args.is_mm else "model.layers"
 
     sensitivity_scores = {}
-    sensitivity_metrics = args.sensitivity_metrics.split(",")
-    logger.info(f"Computing sensitivity scores for {sensitivity_metrics}...")
+    selected_metric = args.sensitivity_metric
+    logger.info(f"Computing sensitivity score using metric: {selected_metric}...")
 
     layer_iter = adapter.generate_decoder_layer(model) if adapter else enumerate(model.model.layers)
 
@@ -116,7 +116,7 @@ def _compute_sensitivity_scores(
                 part_results["metrics"] = calculate_losses(
                     y_true=outs,
                     y_fake=fake,
-                    metrics=sensitivity_metrics,
+                    metrics=[selected_metric],
                 )
                 results[f"{quant_bit}-bit"] = part_results
 
@@ -124,11 +124,11 @@ def _compute_sensitivity_scores(
                 ptq.free()
                 del ptq, fake
 
-            mse4 = results["4-bit"]["metrics"]["mse"]
-            mse8 = results["8-bit"]["metrics"]["mse"]
+            val4 = results["4-bit"]["metrics"].get(selected_metric, 0)
+            val8 = results["8-bit"]["metrics"].get(selected_metric, 0)
 
-            results["score4"] = mse4
-            results["score8"] = mse8
+            results["score4"] = val4
+            results["score8"] = val8
 
             logger.info(f"{layer_name} = {results}")
 
@@ -160,7 +160,7 @@ def main() -> None:
     parser.add_argument("--quant-samples-num", required=True, type=int)
     parser.add_argument("--quant-context-length", required=True, type=int)
     parser.add_argument("--quant-type", required=True, type=str)
-    parser.add_argument("--sensitivity-metrics", required=True, type=str)
+    parser.add_argument("--sensitivity-metric", required=True, type=str)
     parser.add_argument("--save-dir", required=True, type=str)
     parser.add_argument("--sensitivity_scores_save_path", required=True, type=str)
     parser.add_argument("--is-mm", action="store_true")

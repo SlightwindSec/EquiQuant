@@ -16,32 +16,41 @@ class AutomaticQuantizationTool:
     def __init__(
         self,
         aqt_config: dict,
+        tuning_strategy: dict,
         base_model_path: str,
         workspace: dict,
         quant_type: str = "minmax",
     ):
         self.config = aqt_config or {}
+        self.tuning_strategy = tuning_strategy or {}
         self.base_model_path = os.path.abspath(base_model_path)
         self.workspace = workspace or {}
         self.quant_type = quant_type
 
-        self.metrics = self.config.get("sensitivity_metrics", ["mse"])
+        self.metric = self.config.get("sensitivity_metric", "mse")
         self.results_root = os.path.abspath(
             self.config.get("results_dir")
             or os.path.join(self.workspace.get("base_dir", "workspace"), "aqt_results")
         )
         self.omp_num_threads = int(self.config.get("omp_num_threads", 32))
         self.visible_devices = str(self.config.get("ascend_visible_devices", "0"))
-        
+
         self.layer_configs_path = os.path.join(self.results_root, "layer_configs.json")
+        self.initial_configs_rules_path = os.path.join(self.results_root, "initial_configs_rules.json")
         self.sensitivity_scores_save_path = os.path.join(
             self.results_root, self.quant_type, "sensitivity_scores.json"
         )
         self.priority_queue = []
 
+        # Save rules to JSON for launch.py
+        os.makedirs(self.results_root, exist_ok=True)
+        with open(self.initial_configs_rules_path, "w") as f:
+            json.dump(self.tuning_strategy.get("initial_layer_configs", []), f, indent=4)
+
     def get_priority_queue(self):
         """
-        Calculates all possible upgrades for all layers and sorts them by efficiency value.
+        Calculates all possible upgrades for all layers based on custom upgrade_schemes 
+        and sorts them by efficiency value.
         """
         if self.priority_queue:
             return self.priority_queue
@@ -53,32 +62,76 @@ class AutomaticQuantizationTool:
         with open(self.sensitivity_scores_save_path, 'r') as f:
             scores = json.load(f)
 
+        import re
+        upgrade_rules = self.tuning_strategy.get("upgrade_schemes", [])
+        
+        # Default path if no rule matches
+        default_path = ["w4a8_dynamic", "w8a8_default", "w8a8_dynamic", "float"]
+
         upgrades = []
         for name, data in scores.items():
-            score4 = data.get("score4")
-            score8 = data.get("score8")
+            # 1. Determine upgrade path for this layer
+            path = default_path
+            for rule in upgrade_rules:
+                reg = rule.get("regex")
+                if reg and re.match(reg, name):
+                    path = rule.get("path", default_path)
+                    break
+            
+            # 2. Generate transitions (Phase = index in path)
+            for i in range(len(path) - 1):
+                source = path[i]
+                target = path[i+1]
+                phase = i + 1
+                
+                # Skip invalid source configs for simulation
+                if source not in ["w4a8_dynamic", "w8a8_default", "w8a8_dynamic"]:
+                    continue
+                
+                val = self._calculate_transition_value(data, source, target)
+                
+                # Determine size increment for apply_upgrades logic if needed
+                # (Though apply_upgrades currently doesn't use size_inc, only phase)
+                upgrades.append({
+                    "layer": name,
+                    "target": target,
+                    "source": source, # Helpful for validation
+                    "val": val,
+                    "phase": phase
+                })
 
-            # w8a8_default -> w8a8_dynamic (Phase 1)
-            upgrades.append({"layer": name,
-                             "target": "w8a8_dynamic",
-                             "val": score8,
-                             "phase": 1})
-
-            # w4a8_dynamic -> w8a8_default (Phase 2)
-            if score4 < score8:
-                upgrades.append({"layer": name,
-                                 "target": "w8a8_default",
-                                 "val": score4,
-                                 "phase": 2})
-
-            # w8a8_dynamic -> float (Phase 3)
-            upgrades.append({"layer": name,
-                             "target": "float",
-                             "val": score8,
-                             "phase": 3})
         # Phase ASC, score DESC
         self.priority_queue = sorted(upgrades, key=lambda x: (x['phase'], -x['val']))
         return self.priority_queue
+
+    def _calculate_transition_value(self, data, source, target):
+        """
+        Helper to calculate accuracy gain for a transition.
+        Now uses absolute metric reduction (e.g. MSE, Cosine) instead of size-normalized efficiency.
+        """
+        # score4 and score8 are now raw metric values from compute_sensitivity_scores.py
+        val4 = data.get("score4", 0)
+        val8 = data.get("score8", 0)
+        val_f = 0.0
+        
+        # Helper to get Metric for a config name
+        def get_val(cfg):
+            if cfg == "w4a8_dynamic": return val4
+            if cfg in ["w8a8_default", "w8a8_dynamic"]: return val8
+            return val_f
+
+        m_src = get_val(source)
+        m_tgt = get_val(target)
+        
+        # Absolute Metric Reduction
+        diff_metric = max(m_src - m_tgt, 0)
+        
+        # Special case: w8_default -> w8_dynamic (No weight metric change in simulation)
+        # We still want to prioritize fixing sensitive layers first in Phase 1.
+        if source == "w8a8_default" and target == "w8a8_dynamic":
+            return val8 # Higher metric value means more sensitive
+            
+        return diff_metric
 
     def apply_upgrades(self, k: int):
         """
@@ -95,32 +148,28 @@ class AutomaticQuantizationTool:
         pq = self.get_priority_queue()
 
         # 1. Identify valid upgrades and the current active phase
-        # active_phase is the minimum phase index that still has valid upgrades
         valid_upgrades = []
-        active_phase = 4
+        active_phase = 99
 
         for upgrade in pq:
             layer = upgrade["layer"]
             target = upgrade["target"]
+            source = upgrade["source"]
             phase = upgrade["phase"]
 
             if layer not in current_state:
                 continue
             curr = current_state[layer]
+            
+            # Map current state bits/scope to config names for comparison
+            curr_cfg_name = "float"
+            if curr["weight_bits"] == 4:
+                curr_cfg_name = "w4a8_dynamic"
+            elif curr["weight_bits"] == 8:
+                curr_cfg_name = "w8a8_dynamic" if curr["act_scope"] == "per_token" else "w8a8_default"
 
-            # Validity check for specific transitions
-            is_valid = False
-            if phase == 1: # w8_default -> w8_dynamic
-                if curr["weight_bits"] == 8 and curr["act_scope"] == "per_tensor":
-                    is_valid = True
-            elif phase == 2: # w4 -> w8_default
-                if curr["weight_bits"] == 4:
-                    is_valid = True
-            elif phase == 3: # w8_dynamic -> float
-                if curr["weight_bits"] == 8 and curr["act_scope"] == "per_token":
-                    is_valid = True
-
-            if is_valid:
+            # A transition is valid if the source matches current state
+            if source == curr_cfg_name:
                 valid_upgrades.append(upgrade)
                 active_phase = min(active_phase, phase)
 
@@ -150,6 +199,9 @@ class AutomaticQuantizationTool:
             elif target == "w8a8_dynamic":
                 curr["weight_bits"] = 8
                 curr["act_scope"] = "per_token"
+            elif target == "w4a8_dynamic":
+                curr["weight_bits"] = 4
+                curr["act_scope"] = "per_token"
 
             logger.info(f"Applying Upgrade (Phase {active_phase}): {layer} -> {target}")
             upgraded_count += 1
@@ -178,7 +230,7 @@ class AutomaticQuantizationTool:
             f"--quant-samples-num {self.config.get('quant_samples_num', 128)} "
             f"--quant-context-length {self.config.get('quant_context_length', 4096)} "
             f"--quant-type {self.quant_type} "
-            f"--sensitivity-metrics {shlex.quote(','.join(self.metrics))} "
+            f"--sensitivity-metric {shlex.quote(self.metric)} "
             f"--save-dir {shlex.quote(save_dir)} "
             f"--sensitivity_scores_save_path {shlex.quote(self.sensitivity_scores_save_path)} "
         )
@@ -225,6 +277,7 @@ class AutomaticQuantizationTool:
             f"python -m src.aqt.launch "
             f"--model-name-or-path {shlex.quote(self.base_model_path)} "
             f"--layer-configs-path {shlex.quote(self.layer_configs_path)} "
+            f"--initial-configs-rules-path {shlex.quote(self.initial_configs_rules_path)} "
             f"--hybrid-quant-schema-path {shlex.quote(hybrid_quant_schema_path)} "
             f"--hybrid-quant-schema-re-path {shlex.quote(hybrid_quant_schema_re_path)} "
             f"--sensitivity-scores-save-path {shlex.quote(self.sensitivity_scores_save_path)} "

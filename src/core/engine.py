@@ -116,6 +116,7 @@ class EquiQuantEngine:
     def _init_aqt(self):
         self.aqt_tool = AutomaticQuantizationTool(
             aqt_config=self.aqt_config,
+            tuning_strategy=self.config.get("tuning_strategy"),
             base_model_path=self.config["base_model_path"],
             workspace=self.workspace,
         )
