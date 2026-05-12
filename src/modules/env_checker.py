@@ -2,68 +2,106 @@ import shutil
 import sys
 from importlib import metadata
 from importlib.metadata import PackageNotFoundError
+from typing import Tuple, List, Literal
 
 
-def get_pkg_version(package_name):
-    """
-    Checks the version of a pip package using importlib.metadata.
-    Returns a string with status and version.
-    """
-    try:
-        version = metadata.version(package_name)
-        return f"Installed (Version: {version})"
-    except PackageNotFoundError:
-        return "Not Installed"
-    except Exception as e:
-        return f"Error checking: {e}"
+def check_requirements(quantizer: Literal["msmodelslim", "llmcompressor"]) -> bool:
+    """Check all environment dependencies.
 
-
-def check_shell_command(command_name):
-    """
-    Checks if a shell command exists in the PATH using shutil.which.
-    Returns a string with status and path.
-    """
-    path = shutil.which(command_name)
-    if path:
-        return f"Found (Path: {path})"
-    else:
-        return "Command not found"
-
-
-def check_requirements():
-    """
-    Main function to execute all checks and print a formatted report.
-    """
-    print("--- Environment Dependency Check Report---")
+    Args:
+        quantizer: The quantization tool to use.
+    Returns:
+        bool: True if all dependencies are met, False otherwise.
+       """
+    print(f"\n{'=' * 20} Environment Dependency Check Report \n{'=' * 20}")
+    items_to_check = _items_to_check(quantizer)
     check_pass = True
-    items_to_check = [
-        ("shell", "msmodelslim", "ModelSlim Shell Tool"),
+    results = {}
+    max_name_len = max(len(name) for _, name, _ in items_to_check)
+
+    # check required packages
+    print("\n[ Running checks ]\n")
+    for item_type, name, description in items_to_check:
+        print(f"Checking: {description} ({name})...")
+
+        check_func = _check_shell_command if item_type == "shell" else _check_pip_version
+        status_message, success = check_func(name)
+        results[name] = status_message
+        if not success:
+            check_pass = False
+
+    # print results
+    print("\n[ Summary of Results ]")
+    py_version = sys.version.split()[0]
+    print(f"{'python'.ljust(max_name_len + 2)} : Installed (Version: {py_version})\n")
+    for item_type, name, _ in items_to_check:
+        status = results.get(name, " Check not performed")
+        print(f"{name.ljust(max_name_len + 2)} : {status}")
+
+    return check_pass
+
+def _items_to_check(quantizer: Literal["msmodelslim", "llmcompressor"]) -> List[Tuple[str, str, str]]:
+    """Get the items to check for the specified quantizer.
+
+    Args:
+        quantizer: The quantization tool to use.
+    Returns:
+        List[Tuple[str, str, str]]: A list of tuples with item type, name, and description.
+       """
+    base_packages = [
         ("pip", "vllm", "VLLM Framework"),
         ("pip", "vllm-ascend", "VLLM Ascend"),
         ("pip", "torch", "PyTorch Framework"),
         ("pip", "torch-npu", "PyTorch NPU Adapter"),
         ("pip", "ais-bench-benchmark", "AIS Bench Benchmark Tool"),
-        ("pip", "llmcompressor", "LLMCompressor Tool"),
     ]
-    results = {}
-    max_name_len = max(len(name) for _, name, _ in items_to_check)
-    print("\n[ Running checks... ]\n")
+    if quantizer == "msmodelslim":
+        additional_items = [
+            ("shell", "msmodelslim", "ModelSlim Shell Tool"),
+        ]
+    elif quantizer == "llmcompressor":
+        additional_items = [
+            ("pip", "llmcompressor", "LLMCompressor Tool"),
+        ]
+    
+    return base_packages + additional_items
 
-    py_version = sys.version.split()[0]
-    print(f"{'python'.ljust(max_name_len + 2)} : Installed (Version: {py_version})\n")
+def _check_pip_version(package_name: str) -> Tuple[str, bool]:
+    """Check the version of a pip package using importlib.metadata.
 
-    for item_type, name, description in items_to_check:
-        print(f"Checking: {description} ({name})...")
-        if item_type == "shell":
-            results[name] = check_shell_command(name)
-        elif item_type == "pip":
-            results[name] = get_pkg_version(name)
-        if "Command not found" in results[name]:
-            check_pass = False
+    Args:
+        package_name: The name of the pip package to check.
+    Returns:
+        Tuple[str, bool]: A tuple with a string with status and version, and a boolean indicating if the package is installed.
+       """
+    is_installed = False
 
-    print("\n--- Summary of Results ---")
-    for item_type, name, _ in items_to_check:
-        status = results.get(name, " Check not performed")
-        print(f"{name.ljust(max_name_len + 2)} : {status}")
-    print("--- Check complete ---")
-    return check_pass
+    try:
+        version = metadata.version(package_name)
+        status_message = f"Installed (Version: {version})"
+        is_installed = True
+    except PackageNotFoundError:
+        status_message = "Not Installed"
+    except Exception as e:
+        status_message = f"Error checking: {e}"
+
+    return status_message, is_installed
+
+def _check_shell_command(command_name: str) -> Tuple[str, bool]:
+    """Check if a shell command exists in the PATH using shutil.which.
+
+    Args:
+        command_name: The name of the shell command to check.
+    Returns:
+        Tuple[str, bool]: A tuple with a string with status and path, and a boolean indicating if the command is found.
+    """
+    is_installed = False
+
+    path = shutil.which(command_name)
+    if path:
+        status_message = f"Found (Path: {path})"
+        is_installed = True
+    else:
+        status_message = "Command not found"
+
+    return status_message, is_installed
