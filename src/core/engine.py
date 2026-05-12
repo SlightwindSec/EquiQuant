@@ -119,10 +119,6 @@ class EquiQuantEngine:
             base_model_path=self.config["base_model_path"],
             workspace=self.workspace,
         )
-        self.current_budget = self.aqt_tool.initial_budget
-        logger.info(
-            f"AQT detected. Initial checkpoint budget: {self.current_budget} MB"
-        )
 
     def _assess_results(self, results):
         """
@@ -141,44 +137,56 @@ class EquiQuantEngine:
                 status[name] = "high"
             else:
                 status[name] = "ok"
-            logger.info(f"[!!!] {lower=}, {upper=}, {status=}")
+            logger.info(f"Dataset {name}: value={value:.4f}, bounds=[{lower:.4f}, {upper:.4f}], status={status[name]}")
         return status
 
     def _calculate_bounds(self, target_cfg):
         if isinstance(target_cfg, dict):
             target = target_cfg.get("target_accuracy") or target_cfg.get("target")
             tolerance = target_cfg.get("tolerance_ratio") or target_cfg.get(
-                "tolerance", 1.00
+                "tolerance", 0.01
             )
         else:
             target = target_cfg
-            tolerance = 0.0
+            tolerance = 0.01
 
         if target is None:
             raise ValueError("Target accuracy must be provided for each dataset.")
 
-        lower = target - tolerance
-        upper = target + tolerance
+        # Relative tolerance: 0.01 means 1% of target
+        delta = target * tolerance
+        lower = target - delta
+        upper = target + delta
         return lower, upper
 
     # ------------------------------------------------------------------ #
     # Workflows
     # ------------------------------------------------------------------ #
     def _run_with_aqt(self):
-        base_disable_names = self.config.get("disable_names")
+        # Step 0: Sensitivity Analysis
+        logger.info(f"\n{'=' * 20} Sensitivity Analysis (AQT) {'=' * 20}")
+        if os.path.exists(self.aqt_tool.sensitivity_scores_save_path):
+            logger.info("Sensitivity scores already exist, skipping analysis.")
+        else:
+            logger.info("Computing sensitivity scores.")
+            self.aqt_tool.compute_sensitivity_scores_only()
+            if not os.path.exists(self.aqt_tool.sensitivity_scores_save_path):
+                logger.error("Sensitivity scores missing. Analysis failed.")
+                return
 
-        # Step 0: 调用 AQT 进行敏感度分析
-        logger.info(f"\n{'=' * 20} Sensitivity Alalysis (AQT) {'=' * 20}")
-        self.aqt_tool.compute_sensitivity_scores_only()
-        if not os.path.exists(self.aqt_tool.sensitivity_scores_save_path):
-            logger.error(
-                f"Sensitivity_scores_save_path: {self.aqt_tool.sensitivity_scores_save_path} does not exist."
-            )
-            return
+        # Adaptive Search Tuning Parameters
+        base_layer_step = int(self.aqt_config.get("base_layer_step", 5))
+        min_step = int(self.aqt_config.get("min_layer_step", 1))
+        max_step = int(self.aqt_config.get("max_layer_step", 15))
+        gap_threshold = float(self.aqt_config.get("gap_threshold", 0.05)) # Gap > 5% is "large"
+        
+        # Reset stateful config
+        if os.path.exists(self.aqt_tool.layer_configs_path):
+            os.remove(self.aqt_tool.layer_configs_path)
 
         while True:
             self.run_id += 1
-            logger.info(f"\n{'=' * 20} Trial {self.run_id} (AQT) {'=' * 20}")
+            logger.info(f"\n{'=' * 20} Trial {self.run_id} (Adaptive Search) {'=' * 20}")
             current_run_dir = os.path.join(
                 self.workspace["base_dir"], self.workspace["current_run_dir"]
             )
@@ -191,48 +199,34 @@ class EquiQuantEngine:
             )
 
             try:
-                if not self.quantized_model_path:
-                    # Step 1: 调用 AQT 获取量化配置路径
-                    hybrid_quant_schema_path, hybrid_quant_schema_re_path = (
-                        self.aqt_tool.run(
-                            run_id=self.run_id,
-                            budget_mb=self.current_budget,
-                        )
-                    )
-                    if not os.path.exists(hybrid_quant_schema_path) or not os.path.exists(
-                        hybrid_quant_schema_re_path
-                    ):
-                        logger.error("AQT failed. Skipping this trial.")
-                        break
-
-                    # Step 2: 量化器获取量化配置生成量化所需yaml/py
-                    quant_log_path = os.path.join(current_run_dir, f"{self.quantization_tool}.log")
-                    quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]
-                    quantizer = quantizer_cls(
-                        quant_config=self.config["quantization"],
-                        base_model_path=self.config["base_model_path"],
-                        fallback_layers=base_disable_names,
-                        output_config_path=quant_config_path,
-                        output_weights_path=quant_weights_path,
-                        hybrid_quant_schema_path=hybrid_quant_schema_path,
-                        hybrid_quant_schema_re_path=hybrid_quant_schema_re_path,
-                        quant_log_path=quant_log_path,
-                    )
-
-                    # Step 3: 量化器量化模型
-                    quantized_model_path = quantizer.run()
-                    if not quantized_model_path:
-                        logger.error("Quantization failed. Skipping this trial.")
-                        break
-                else:
-                    quantized_model_path = self.quantized_model_path
-                    self.quantized_model_path = ""
-
-                if not os.path.exists(quantized_model_path):
-                    logger.error("Quantized model path does not exist. Skipping this trial.")
+                # Step 1: AQT Logic (Stateful)
+                hybrid_quant_schema_path, hybrid_quant_schema_re_path = (
+                    self.aqt_tool.run(run_id=self.run_id)
+                )
+                if not os.path.exists(hybrid_quant_schema_path):
+                    logger.error("AQT failed to generate schema. Stopping.")
                     break
 
-                # Step 4: 拉取vllm服务
+                # Step 2: Quantization
+                quant_log_path = os.path.join(current_run_dir, f"{self.quantization_tool}.log")
+                quantizer_cls = QUANTIZER_MAPPING[self.quantization_tool]
+                quantizer = quantizer_cls(
+                    quant_config=self.config["quantization"],
+                    base_model_path=self.config["base_model_path"],
+                    fallback_layers=self.config.get("disable_names"),
+                    output_config_path=quant_config_path,
+                    output_weights_path=quant_weights_path,
+                    hybrid_quant_schema_path=hybrid_quant_schema_path,
+                    hybrid_quant_schema_re_path=hybrid_quant_schema_re_path,
+                    quant_log_path=quant_log_path,
+                )
+
+                quantized_model_path = quantizer.run()
+                if not quantized_model_path or not os.path.exists(quantized_model_path):
+                    logger.error("Quantization failed. Stopping.")
+                    break
+
+                # Step 3: Serving
                 vllm_log_path = os.path.join(current_run_dir, "vllm_server.log")
                 server = VllmServer(
                     model_path=quantized_model_path,
@@ -241,10 +235,15 @@ class EquiQuantEngine:
                 )
 
                 if not server.start():
-                    logger.error("VLLM failed to start, skipping this trial.")
-                    continue
+                    logger.error("VLLM failed to start. Stopping.")
+                    break
 
-                # Step 5: aisbench评测
+                # Step 4: Benchmarking with Early Stopping
+                def check_accuracy(alias, acc):
+                    target_cfg = self.target_accuracies.get(alias)
+                    lower, _ = self._calculate_bounds(target_cfg)
+                    return acc >= lower
+
                 bencher = AisBencher(
                     eval_config=self.evaluation_config,
                     server_config=self.config["vllm_server"],
@@ -252,65 +251,45 @@ class EquiQuantEngine:
                     current_run_dir=current_run_dir,
                     run_id=self.run_id,
                 )
-                self.last_results = bencher.run()
-                logger.info(f"Trial {self.run_id} Results: {self.last_results}")
+                self.last_results = bencher.run(early_stop_fn=check_accuracy)
+                logger.info(f"Trial {self.run_id} Results (Partial/Full): {self.last_results}")
 
-                # Step 6: 结果评估，预算调整
+                # Step 5: Adaptive Assessment
                 status = self._assess_results(self.last_results)
-                logger.info(f"AQT assessment: {status}")
-                if any(v in ("missing", "low") for v in status.values()):
-                    new_budget = self.aqt_tool.increase_budget(self.current_budget)
-                    if new_budget == self.current_budget:
-                        logger.error(
-                            "Reached max AQT budget but accuracy is still low. Stopping."
-                        )
-                        break
-                    logger.info(
-                        f"Accuracy below target. Increasing AQT budget to {new_budget} MB."
-                    )
-                    self.current_budget = new_budget
-                    continue
+                # is_passed is True if all datasets meet or exceed the accuracy floor (ok/high)
+                is_passed = all(v in ("ok", "high") for v in status.values())
 
-                if all(v == "ok" for v in status.values()):
-                    self.strategy.best_result = {
-                        "fallback": list(base_disable_names),
-                        "results": self.last_results,
-                    }
-                    self._persist_successful_run(
-                        quantized_model_path, quant_config_path
-                    )
-                    logger.info(
-                        "Target accuracy satisfied within tolerance. Exiting optimization loop."
-                    )
+                if is_passed:
+                    self._persist_successful_run(quantized_model_path, quant_config_path)
+                    logger.info("Target accuracy satisfied (all datasets ok or high). Optimization complete.")
                     break
 
-                # 剩余情况：全部高于上界，尝试降低预算以提升性能
-                if all(v == "high" for v in status.values()):
-                    new_budget = self.aqt_tool.decrease_budget(self.current_budget)
-                    if new_budget == self.current_budget:
-                        logger.info(
-                            "Budget already at minimum, accept current results."
-                        )
-                        self._persist_successful_run(
-                            quantized_model_path, quant_config_path
-                        )
-                        break
-                    logger.info(
-                        f"Accuracy well above target, decreasing AQT budget to {new_budget} MB for better performance."
-                    )
-                    self.current_budget = new_budget
-                    continue
-
-                # 混合高/ok 情况：认为满足要求
-                self.strategy.best_result = {
-                    "fallback": list(base_disable_names),
-                    "results": self.last_results,
-                }
-                self._persist_successful_run(quantized_model_path, quant_config_path)
-                logger.info(
-                    "Mixed OK/HIGH results accepted. Exiting optimization loop."
-                )
-                break
+                # Calculate Gap and Adaptive Step Size K
+                # Note: Gap is only calculated for evaluated datasets; missing ones are ignored.
+                max_gap = 0.0
+                evaluated_gaps = []
+                for name, target_cfg in self.target_accuracies.items():
+                    if name in self.last_results:
+                        target = target_cfg.get("target_accuracy", 0.0)
+                        current = self.last_results[name]
+                        gap = target - current
+                        evaluated_gaps.append(gap)
+                
+                if evaluated_gaps:
+                    max_gap = max(evaluated_gaps)
+                else:
+                    # Fallback if somehow no results were returned
+                    max_gap = gap_threshold 
+                
+                # Adaptive K logic
+                k = int(base_layer_step * (max_gap / gap_threshold))
+                k = max(min_step, min(k, max_step))
+                
+                logger.info(f"Accuracy shortfall: {max_gap:.4f}. Adaptive step size K = {k} layers.")
+                
+                # Apply Upgrades to State
+                self.aqt_tool.apply_upgrades(k)
+                # Note: Next iteration will use the updated layer_configs_path in self.aqt_tool.run()
 
             finally:
                 if "server" in locals() and server.process.process:
