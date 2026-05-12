@@ -52,7 +52,7 @@ def convert_experts_to_mlp(
 
         for expert_idx in range(config.num_experts):
             gate_up_weight = original_moe_block.experts.gate_up_proj[expert_idx]
-            gate_weight, up_weight = gate_up_weight.chunk(2, dim=0)
+            gate_weight, up_weight = gate_up_weight
             new_moe_block.experts[expert_idx].gate_proj.weight.copy_(gate_weight)
             new_moe_block.experts[expert_idx].up_proj.weight.copy_(up_weight)
             new_moe_block.experts[expert_idx].down_proj.weight.copy_(original_moe_block.experts.down_proj[expert_idx])
