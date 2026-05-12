@@ -1,13 +1,12 @@
 from src.modules import check_requirements
-from src.utils import GlobalConfig
+from src.utils import set_global_args, get_config
 from src.core.engine import EquiQuantEngine
 
 
 if __name__ == "__main__":
-    config = GlobalConfig()
-
-    if not check_requirements(config.raw_config["quantization_tool"]):
+    if not check_requirements():
         exit()
-
+    set_global_args()
+    config = get_config()
     engine = EquiQuantEngine(config.raw_config)
     engine.run()
