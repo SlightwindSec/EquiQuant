@@ -27,7 +27,7 @@ DEFAULT_VLLM_ARGS = {
     },
 }
 
-SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim"}
+SUPPORTED_QUANTIZATION_TOOLS = {"llmcompressor", "msmodelslim", "modeloptimizer"}
 
 
 class GlobalConfig:
@@ -111,6 +111,17 @@ class GlobalConfig:
                 "num_calibration_samples": cfg.get("num_calibration_samples", 512),
                 "max_sequence_length": cfg.get("max_sequence_length", 2048),
                 "modifier": cfg.get("quantization_modifier", "PTQ"),
+            }
+        elif quantization_tool == "modeloptimizer":
+            normalized["quantization"] = {
+                "visible_devices": visible_devices,
+                "model_type": cfg.get("quantization_model_type", "Qwen3-32B"),
+                "device": cfg.get("quantization_device", "npu"),
+                "calib_data_path": calib_data_path,
+                "calib_samples": cfg.get("calib_samples", 512),
+                "batch_size": cfg.get("batch_size", 16),
+                "effective_bits": cfg.get("effective_bits", 8.0),
+                "search_space": cfg.get("search_space", "fp8,int4_awq"),
             }
 
         evaluation = {
