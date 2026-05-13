@@ -25,6 +25,7 @@ class QuantLayerConfigManager:
         num_layers: int,
         sensitivity_scores: Dict[str, Any] = None,
         layer_configs: Dict[str, Any] = None,
+        initial_configs_rules: List[Dict[str, str]] = None,
     ) -> None:
         # 补充 skip 的 layer name
         self.skips = {"embed_tokens", "mlp.gate.", "lm_head", "mlp.shared_expert_gate", "model.norm", "indexer"}
@@ -33,6 +34,7 @@ class QuantLayerConfigManager:
         self.num_layers = num_layers
         self.sensitivity_scores = sensitivity_scores
         self.layer_configs = layer_configs or {}
+        self.initial_configs_rules = initial_configs_rules or []
         self.cfg: Dict[str, QuantLayerConfig] = self._init_layer_quant_configs()
 
     def _init_layer_quant_configs(self) -> Dict[str, QuantLayerConfig]:
@@ -47,7 +49,7 @@ class QuantLayerConfigManager:
     def _determine_layer_config(self, name: str) -> QuantLayerConfig:
         """
         Determine the specific weight/activation configuration for a single layer 
-        based on priority: Skips > Existing State > Sensitivity Heuristic > Default.
+        based on priority: Skips > Existing State > Regex Rules > Sensitivity Heuristic > Default.
         """
         # 1. Skip layers (Fixed Float16/BFloat16)
         if any([i in name for i in self.skips]):
@@ -64,18 +66,31 @@ class QuantLayerConfigManager:
                 act_scope=state["act_scope"]
             )
 
-        # 3. Efficiency Heuristic (First Trial: Choosing between W4 and W8 based on MSE/Size)
+        # 3. Flexible Initial Config Rules (Regex based)
+        for rule in self.initial_configs_rules:
+            reg = rule.get("regex")
+            cfg_name = rule.get("config")
+            if reg and re.match(reg, name):
+                if cfg_name == "w4a8_dynamic":
+                    return QuantLayerConfig(weight_bits=4, act_bits=8, group_size=0, act_scope="per_token")
+                elif cfg_name == "w8a8_dynamic":
+                    return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_token")
+                elif cfg_name == "w8a8_default":
+                    return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_tensor")
+                elif cfg_name == "float":
+                    return QuantLayerConfig(weight_bits=16, act_bits=16, group_size=0, act_scope="per_token")
+
+        # 4. Efficiency Heuristic (First Trial: Choosing between W4 and W8 based on MSE)
         if name in self.sensitivity_scores:
             data = self.sensitivity_scores[name]
             score4 = data.get("score4")
             score8 = data.get("score8")
-            # TODO: how to select the initial config
             if score4 < score8:
                 return QuantLayerConfig(weight_bits=4, act_bits=8, group_size=0, act_scope="per_token")
             else:
-                return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_token")
+                return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_tensor")
             
-        # 4. Global Default (Standard W8 Dynamic)
+        # 5. Global Default (Standard W8 Dynamic)
         return QuantLayerConfig(weight_bits=8, act_bits=8, group_size=0, act_scope="per_token")
 
     def create_quant_layers_mapping(self) -> Dict[str, str]:

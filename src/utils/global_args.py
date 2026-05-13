@@ -58,6 +58,14 @@ class GlobalConfig:
                 "strategy_initial_fallback_layers", ["lm_head"]
             ),
         }
+        
+        # Parse Tuning Strategy (Flexible Configs & Upgrade Schemes)
+        tuning_strategy = cfg.get("tuning_strategy", {})
+        normalized["tuning_strategy"] = {
+            "initial_layer_configs": tuning_strategy.get("initial_layer_configs", []),
+            "upgrade_schemes": tuning_strategy.get("upgrade_schemes", []),
+        }
+
         normalized["disable_names"] = cfg.get("disable_names", [])
 
         quantization_tool = cfg.get("quantization_tool", "msmodelslim")
@@ -208,6 +216,12 @@ class GlobalConfig:
                 "AQT is disabled, please set `aqt_enabled` to true in config/config.yaml"
             )
 
+        metric = cfg.get("aqt_sensitivity_metric", "mse")
+        if metric not in ["mse", "cosine", "relative_l2", "kl_div"]:
+            raise ValueError(
+                f"`aqt_sensitivity_metric` must be one of ['mse', 'cosine', 'relative_l2', 'kl_div'], but got '{metric}'"
+            )
+
         default_aqt_results = os.path.join(
             normalized["workspace"]["base_dir"], "aqt_results"
         )
@@ -220,7 +234,7 @@ class GlobalConfig:
             "quant_data_path": cfg.get("aqt_quant_data_path"),
             "quant_samples_num": cfg.get("aqt_quant_samples_num", 128),
             "quant_context_length": cfg.get("aqt_quant_context_length", 4096),
-            "sensitivity_metrics": cfg.get("aqt_sensitivity_metrics", ["mse"]),
+            "sensitivity_metric": metric,
             "initial_budget_mb": cfg.get("aqt_initial_budget_mb", 2500),
             "budget_step_mb": cfg.get("aqt_budget_step_mb", 500),
             "budget_step_down_mb": cfg.get("aqt_budget_step_down_mb", 250),
